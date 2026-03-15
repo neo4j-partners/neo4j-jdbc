@@ -313,6 +313,119 @@ class FieldMatcherTests extends QomTestSupport {
 	}
 
 	// -------------------------------------------------------------------------
+	// §6.3 collectAggregates
+	// -------------------------------------------------------------------------
+
+	@Nested
+	@DisplayName("§6.3 collectAggregates")
+	class CollectAggregatesTests {
+
+		@Test
+		@DisplayName("Simple: HAVING count(*) > 5 returns 1 aggregate")
+		void simpleCountStar() {
+			var select = parseSelect("SELECT name, count(*) FROM People GROUP BY name HAVING count(*) > 5");
+			var aggregates = FieldMatcher.collectAggregates(select.$having());
+
+			assertThat(aggregates).hasSize(1);
+			assertThat(FieldMatcher.isAggregate(aggregates.get(0))).isTrue();
+			assertThat(aggregates.get(0)).isInstanceOf(QOM.Count.class);
+		}
+
+		@Test
+		@DisplayName("Compound AND: HAVING count(*) > 5 AND max(age) > 50 returns 2 aggregates")
+		void compoundAnd() {
+			var select = parseSelect(
+					"SELECT name, count(*) AS cnt, max(age) AS mx FROM People GROUP BY name HAVING count(*) > 5 AND max(age) > 50");
+			var aggregates = FieldMatcher.collectAggregates(select.$having());
+
+			assertThat(aggregates).hasSize(2);
+			assertThat(aggregates).allSatisfy(f -> assertThat(FieldMatcher.isAggregate(f)).isTrue());
+		}
+
+		@Test
+		@DisplayName("Compound OR: HAVING count(*) > 2 OR min(age) < 18 returns 2 aggregates")
+		void compoundOr() {
+			var select = parseSelect(
+					"SELECT name, count(*) AS cnt, min(age) AS mn FROM People GROUP BY name HAVING count(*) > 2 OR min(age) < 18");
+			var aggregates = FieldMatcher.collectAggregates(select.$having());
+
+			assertThat(aggregates).hasSize(2);
+			assertThat(aggregates).allSatisfy(f -> assertThat(FieldMatcher.isAggregate(f)).isTrue());
+		}
+
+		@Test
+		@DisplayName("Arithmetic: HAVING max(salary) > 2 * avg(salary) returns 2 aggregates")
+		void arithmetic() {
+			var select = parseSelect(
+					"SELECT department, max(salary) AS mx, avg(salary) AS av FROM Employees GROUP BY department HAVING max(salary) > 2 * avg(salary)");
+			var aggregates = FieldMatcher.collectAggregates(select.$having());
+
+			assertThat(aggregates).hasSize(2);
+			assertThat(aggregates).allSatisfy(f -> assertThat(FieldMatcher.isAggregate(f)).isTrue());
+			assertThat(aggregates).anyMatch(f -> f instanceof QOM.Max);
+			assertThat(aggregates).anyMatch(f -> f instanceof QOM.Avg);
+		}
+
+		@Test
+		@DisplayName("Nested arithmetic: HAVING sum(age) + sum(salary) > 100 returns 2 aggregates")
+		void nestedArithmetic() {
+			var select = parseSelect(
+					"SELECT department, sum(age) AS sa, sum(salary) AS ss FROM Employees GROUP BY department HAVING sum(age) + sum(salary) > 100");
+			var aggregates = FieldMatcher.collectAggregates(select.$having());
+
+			assertThat(aggregates).hasSize(2);
+			assertThat(aggregates).allSatisfy(f -> assertThat(FieldMatcher.isAggregate(f)).isTrue());
+			assertThat(aggregates).allMatch(f -> f instanceof QOM.Sum);
+		}
+
+		@Test
+		@DisplayName("No aggregates: HAVING name = 'Alice' returns empty list")
+		void noAggregates() {
+			var select = parseSelect("SELECT name, count(*) FROM People GROUP BY name HAVING name = 'Alice'");
+			var aggregates = FieldMatcher.collectAggregates(select.$having());
+
+			assertThat(aggregates).isEmpty();
+		}
+
+		@Test
+		@DisplayName("Mixed: HAVING count(*) > 5 AND name = 'Alice' returns 1 aggregate")
+		void mixed() {
+			var select = parseSelect(
+					"SELECT name, count(*) AS cnt FROM People GROUP BY name HAVING count(*) > 5 AND name = 'Alice'");
+			var aggregates = FieldMatcher.collectAggregates(select.$having());
+
+			assertThat(aggregates).hasSize(1);
+			assertThat(FieldMatcher.isAggregate(aggregates.get(0))).isTrue();
+			assertThat(aggregates.get(0)).isInstanceOf(QOM.Count.class);
+		}
+
+		@Test
+		@DisplayName("Duplicate aggregates: HAVING count(*) > 5 OR count(*) < 100 returns 2 entries")
+		void duplicateAggregates() {
+			var select = parseSelect(
+					"SELECT name, count(*) AS cnt FROM People GROUP BY name HAVING count(*) > 5 OR count(*) < 100");
+			var aggregates = FieldMatcher.collectAggregates(select.$having());
+
+			assertThat(aggregates).hasSize(2);
+			assertThat(aggregates).allSatisfy(f -> assertThat(FieldMatcher.isAggregate(f)).isTrue());
+			assertThat(aggregates).allMatch(f -> f instanceof QOM.Count);
+		}
+
+		@Test
+		@DisplayName("BETWEEN: HAVING count(*) BETWEEN 5 AND 10 returns 1 aggregate")
+		void between() {
+			var select = parseSelect(
+					"SELECT name, count(*) AS cnt FROM People GROUP BY name HAVING count(*) BETWEEN 5 AND 10");
+			var aggregates = FieldMatcher.collectAggregates(select.$having());
+
+			assertThat(aggregates).hasSize(1);
+			assertThat(FieldMatcher.isAggregate(aggregates.get(0))).isTrue();
+			assertThat(aggregates.get(0)).isInstanceOf(QOM.Count.class);
+		}
+
+	}
+
+	// -------------------------------------------------------------------------
 	// Negative / false-positive cases
 	// -------------------------------------------------------------------------
 

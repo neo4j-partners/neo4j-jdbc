@@ -18,6 +18,10 @@
  */
 package org.neo4j.jdbc.translator.impl;
 
+import java.util.ArrayList;
+import java.util.List;
+
+import org.jooq.Condition;
 import org.jooq.Field;
 import org.jooq.TableField;
 import org.jooq.impl.QOM;
@@ -115,6 +119,94 @@ final class FieldMatcher {
 	static boolean isAggregate(Field<?> f) {
 		return f instanceof QOM.Count || f instanceof QOM.Sum || f instanceof QOM.Min || f instanceof QOM.Max
 				|| f instanceof QOM.Avg || f instanceof QOM.StddevSamp || f instanceof QOM.StddevPop;
+	}
+
+	/**
+	 * Walks a jOOQ {@link Condition} tree and collects all aggregate sub-expressions
+	 * found within it. Handles logical connectives ({@code AND}, {@code OR}, {@code XOR},
+	 * {@code NOT}), comparison operators ({@code >}, {@code >=}, {@code <}, {@code <=},
+	 * {@code =}, {@code <>}), {@code BETWEEN}, and arithmetic expressions ({@code +},
+	 * {@code -}, {@code *}, {@code /}) that may contain nested aggregates.
+	 * @param condition the condition tree to walk
+	 * @return a list of all aggregate {@link Field} instances found (may contain
+	 * duplicates)
+	 */
+	static List<Field<?>> collectAggregates(Condition condition) {
+		var result = new ArrayList<Field<?>>();
+		collectAggregatesFromCondition(condition, result);
+		return result;
+	}
+
+	private static void collectAggregatesFromCondition(Condition condition, List<Field<?>> result) {
+		if (condition instanceof QOM.And and) {
+			collectAggregatesFromCondition(and.$arg1(), result);
+			collectAggregatesFromCondition(and.$arg2(), result);
+		}
+		else if (condition instanceof QOM.Or or) {
+			collectAggregatesFromCondition(or.$arg1(), result);
+			collectAggregatesFromCondition(or.$arg2(), result);
+		}
+		else if (condition instanceof QOM.Xor xor) {
+			collectAggregatesFromCondition(xor.$arg1(), result);
+			collectAggregatesFromCondition(xor.$arg2(), result);
+		}
+		else if (condition instanceof QOM.Not not) {
+			collectAggregatesFromCondition(not.$arg1(), result);
+		}
+		else if (condition instanceof QOM.Gt<?> gt) {
+			collectAggregatesFromField(gt.$arg1(), result);
+			collectAggregatesFromField(gt.$arg2(), result);
+		}
+		else if (condition instanceof QOM.Ge<?> ge) {
+			collectAggregatesFromField(ge.$arg1(), result);
+			collectAggregatesFromField(ge.$arg2(), result);
+		}
+		else if (condition instanceof QOM.Lt<?> lt) {
+			collectAggregatesFromField(lt.$arg1(), result);
+			collectAggregatesFromField(lt.$arg2(), result);
+		}
+		else if (condition instanceof QOM.Le<?> le) {
+			collectAggregatesFromField(le.$arg1(), result);
+			collectAggregatesFromField(le.$arg2(), result);
+		}
+		else if (condition instanceof QOM.Eq<?> eq) {
+			collectAggregatesFromField(eq.$arg1(), result);
+			collectAggregatesFromField(eq.$arg2(), result);
+		}
+		else if (condition instanceof QOM.Ne<?> ne) {
+			collectAggregatesFromField(ne.$arg1(), result);
+			collectAggregatesFromField(ne.$arg2(), result);
+		}
+		else if (condition instanceof QOM.Between<?> between) {
+			collectAggregatesFromField(between.$arg1(), result);
+			collectAggregatesFromField(between.$arg2(), result);
+			collectAggregatesFromField(between.$arg3(), result);
+		}
+	}
+
+	private static void collectAggregatesFromField(Field<?> field, List<Field<?>> result) {
+		if (field == null) {
+			return;
+		}
+		if (isAggregate(field)) {
+			result.add(field);
+		}
+		else if (field instanceof QOM.Add<?> add) {
+			collectAggregatesFromField(add.$arg1(), result);
+			collectAggregatesFromField(add.$arg2(), result);
+		}
+		else if (field instanceof QOM.Sub<?> sub) {
+			collectAggregatesFromField(sub.$arg1(), result);
+			collectAggregatesFromField(sub.$arg2(), result);
+		}
+		else if (field instanceof QOM.Mul<?> mul) {
+			collectAggregatesFromField(mul.$arg1(), result);
+			collectAggregatesFromField(mul.$arg2(), result);
+		}
+		else if (field instanceof QOM.Div<?> div) {
+			collectAggregatesFromField(div.$arg1(), result);
+			collectAggregatesFromField(div.$arg2(), result);
+		}
 	}
 
 }

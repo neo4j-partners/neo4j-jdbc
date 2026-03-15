@@ -9,9 +9,7 @@ Baseline reference (captured in `research_logs/init_baseline/`):
 
 ---
 
-## Parallelization Strategy
-
-Phases are organized into parallel groups to maximize throughput. Each group runs as separate agents in isolated git worktrees, then merges before the next group starts.
+## Execution Strategy
 
 ```
 Time →
@@ -20,35 +18,18 @@ Time →
 Parallel   ├─ Agent B: Phase 2 (field matcher)          ─┤── merge ──┐
 Group 1    └─ Agent C: Phase 3 (alias registry)         ─┘           │
                                                                      ▼
-Sequential ──────────── Phase 4 (WITH clause wiring) ────────────────┤
-                                                                     │
-           ┌─ Agent D: Phase 5 (ORDER BY alias)         ─┐          │
-Parallel   │                                              ├─ merge ──┤
-Group 2    └─ Agent E: Phase 6 (HAVING translation)     ─┘          │
-                                                                     ▼
-Sequential ──────────── Phase 7 (DISTINCT, LIMIT, hardening) ────────┘
+Sequential ──── Phase 4 (WITH clause wiring) ───────────────────────────┐
+                                                                        ▼
+Sequential ──── Phase 5 (ORDER BY + unified interception) ──────────────┤
+                                                                        ▼
+Sequential ──── Phase 6 (HAVING hidden columns) ────────────────────────┤
+                                                                        ▼
+Sequential ──── Phase 7 (DISTINCT, LIMIT, hardening) ───────────────────┘
+                                                                        ▼
+Manual     ──── Phase 8 (integration tests — requires Docker) ──────────┘
 ```
 
-### Group 1 — Fully parallelizable (zero file conflicts)
-
-| Agent | Phase | Files Created/Modified | Conflict Risk |
-|-------|-------|----------------------|---------------|
-| A | Phase 1 (Tier 1 Snapshot) | Adds methods to `SqlToCypherTests.java` | None — new methods only |
-| B | Phase 2 (Field Matcher) | New `FieldMatcher.java` + `FieldMatcherTests.java` | None — new files only |
-| C | Phase 3 (Alias Registry) | New `AliasRegistry.java` + `AliasRegistryTests.java` | None — new files only |
-
-### Group 2 — Parallelizable with merge risk
-
-| Agent | Phase | Files Modified | Conflict Risk |
-|-------|-------|---------------|---------------|
-| D | Phase 5 (ORDER BY) | `SqlToCypher.java`, `SqlToCypherTests.java` | Medium — different methods but same files |
-| E | Phase 6 (HAVING) | `SqlToCypher.java`, `SqlToCypherTests.java` | Medium — different methods but same files |
-
-### Sequential phases
-
-- **Phase 4**: Wires matcher + registry into translator. Must wait for Group 1 merge.
-- **Phase 7**: Hardening + combinations. Must wait for Group 2 merge.
-- **Phase 8**: Integration tests (excluded from parallelization — requires Docker, run manually).
+**Note**: Phases 5-7 are sequential (not parallel) per Q1 resolution. Phase 6 depends on Phase 5's unified interception, registry timing, and `isAggregate()` visibility.
 
 ### Execution Log
 
@@ -65,6 +46,21 @@ Sequential ──────────── Phase 7 (DISTINCT, LIMIT, harden
 | | Replaced `resolveFieldName` with `FieldMatcher.fieldsMatch` | DONE | Structural matching for JOIN correctness |
 | | Updated aggregates[4-9] expectations | DONE | 6 tests now expect WITH-based output |
 | | Post-Phase 4 test run: 390 tests, 0 failures, 0 errors | PASS | All 6 aggregate failures resolved |
+| 2026-03-15 | Phase 5: ORDER BY + Unified Interception (production code) | COMPLETE | See `group_phase_4_plan.md` for details |
+| | 5.0: Defensive null in non-WITH path | DONE | `finally` block resets `this.aliasRegistry = null` |
+| | 5.1: Registry timing restructured in `buildWithClause()` | DONE | Set after GROUP BY loop, before `reading.with()` (Q3 gap fixed) |
+| | 5.1: `WithClauseResult` simplified (registry field removed) | DONE | RN-3 resolution applied |
+| | 5.2: `finally` block for registry cleanup | DONE | Wraps from `needsWithClause` through `build()` |
+| | 5.3: Unified registry interception in `expression(Field<?>)` | DONE | Standalone block at top, type-guarded (RN-6) |
+| | 5.4: `isAggregate()` made package-private | DONE | Already in FieldMatcher.java |
+| | 5.6: Error on de-scoped ORDER BY in catch block | DONE | Guard at top of catch, before `findTableFieldInTables()` |
+| | 5.8: Test expectations updated (lines 968-969) | DONE | Both HAVING and ORDER BY now use alias-resolved output |
+| | Post-Phase 5 test run: 390 tests, 0 failures, 0 errors | PASS | All snapshots unchanged |
+| 2026-03-15 | Parallel test streams (during Phase 5 impl) | COMPLETE | 2 worktree agents |
+| | Stream A: `snapshotOrderBy` — 7 ORDER BY regression tests | PASS | SqlToCypherTests.java |
+| | Stream B: `collectAggregates()` — utility + 9 tests | PASS | FieldMatcher.java + FieldMatcherTests.java |
+| | Merged to main working directory | CLEAN | No conflicts — different files/methods |
+| | Post-merge test run: 407 tests, 0 failures, 0 errors | PASS | 390 + 7 + 9 + 1 = 407 |
 
 ---
 
@@ -142,38 +138,56 @@ Sequential ──────────── Phase 7 (DISTINCT, LIMIT, harden
 
 ---
 
-## Phase 5: ORDER BY Alias Resolution
+## Phase 5: ORDER BY Alias Resolution — COMPLETE
 
 > Fix ORDER BY to reference WITH aliases when WITH clause is present.
 > Reference: prodTesting.md §Tier 5 (5.1–5.3), group phase 4.md §Phase 5
 
-- [ ] Add ORDER BY with WITH clause tests (§5.1, ~4 cases)
-- [ ] Add ORDER BY regression tests — no GROUP BY (§5.2, ~4 cases)
-- [ ] Add ORDER BY + GROUP BY + LIMIT chain test (§5.3, ~1 case)
-- [ ] Verify sort direction (ASC/DESC) preserved after alias resolution
-- [ ] Run `test.sh --step 1` — Tiers 1-4 still green
-- [ ] Run `test.sh --step 2` — no new failures
+- [x] Add ORDER BY with WITH clause tests (§5.1) — covered by updated `withClauseGeneration` test (line 969)
+- [x] Add ORDER BY regression tests — no GROUP BY (§5.2, 7 cases) — `snapshotOrderBy` parameterized test
+- [x] Add ORDER BY + GROUP BY + LIMIT chain test (§5.3) — covered by `snapshotOrderBy` case 3
+- [x] Verify sort direction (ASC/DESC) preserved after alias resolution — `snapshotOrderBy` cases 2, 4, 6
+- [x] Production code: unified registry interception, registry timing, `finally` cleanup, de-scoped ORDER BY error
+- [x] Run translator tests — 407 tests, 0 failures, 0 errors
+- [x] Simple HAVING also works via unified interception — `withClauseGeneration` line 968 passes with alias-resolved output
 
-**Gate**: ~10 ORDER BY tests pass. All previous tiers still green.
+**Gate**: 7 new ORDER BY snapshot tests + 2 updated expectations. All Tier 1-4 tests unchanged. PASSED.
+
+**Remaining Phase 5 test gaps** (can be added in Phase 7 hardening):
+- ORDER BY on GROUP BY-only column not in RETURN (valid — WITH alias resolves)
+- ORDER BY on expression not in registry after WITH (should throw error — 5.6 implemented but no dedicated test)
+- Simple HAVING validation tests (~3 cases per Q4 recommendation)
 
 ---
 
-## Phase 6: HAVING Translation
+## Phase 6: HAVING Translation — IN PROGRESS
 
 > Add HAVING support using the structural matcher and alias registry.
 > Reference: prodTesting.md §Tier 6 (6.1–6.7), group phase 4.md §Phase 6
 
-- [ ] Add simple HAVING tests (§6.1, ~3 cases)
+**Already complete** (from parallel test streams + Phase 5 unified interception):
+- [x] `collectAggregates()` utility method in `FieldMatcher.java` (6.2)
+- [x] `collectAggregates()` tests — 9 cases in `FieldMatcherTests.java` (6.3)
+- [x] `isAggregate()` package-private visibility (5.4, needed by 6.2)
+- [x] Simple HAVING works automatically via Phase 5 unified interception (aggregate IS in SELECT)
+- [x] Registry timing set before `reading.with()` — Q3 gap fixed in Phase 5
+
+**Remaining production code** (see `group_phase_4_plan.md` §Phase 6):
+- [ ] 6.1: Verify HAVING forces WITH path (confirm line 482 still correct)
+- [ ] 6.4: Integrate `collectAggregates()` into `buildWithClause()` — hidden HAVING columns
+- [ ] 6.5: Remove unused `withExpressions` parameter from `havingCondition()` (Q6)
+
+**Remaining tests**:
+- [ ] Add HAVING with aggregate NOT in SELECT tests (§6.4, ~2 cases)
 - [ ] Add compound HAVING tests — AND, OR, nested (§6.2, ~3 cases)
 - [ ] Add arithmetic in HAVING test (§6.3, ~1 case)
-- [ ] Add HAVING with aggregate NOT in SELECT tests (§6.4, ~2 cases)
 - [ ] Add HAVING with every supported aggregate test (§6.5, ~5 cases)
 - [ ] Add HAVING + ORDER BY combined tests (§6.6, ~2 cases)
 - [ ] Add HAVING on JOIN queries test (§6.7, ~1 case)
+- [ ] Add HAVING by alias tests (§6.6 extended)
+- [ ] Add HAVING without GROUP BY test (Q10)
 - [ ] Verify hidden columns appear in WITH but not in RETURN
-- [ ] Verify HAVING by alias produces same output as HAVING by function form
 - [ ] Run `test.sh --step 1` — Tiers 1-5 still green
-- [ ] Run `test.sh --step 2` — no new failures
 
 **Gate**: ~20 HAVING tests pass. All previous tiers still green.
 

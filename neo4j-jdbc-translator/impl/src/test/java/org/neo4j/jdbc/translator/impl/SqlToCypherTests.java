@@ -938,6 +938,23 @@ class SqlToCypherTests {
 	}
 
 	@ParameterizedTest
+	@CsvSource(delimiterString = "|",
+			textBlock = """
+					SELECT name FROM People p ORDER BY name|MATCH (p:People) RETURN p.name AS name ORDER BY p.name
+					SELECT name FROM People p ORDER BY name DESC|MATCH (p:People) RETURN p.name AS name ORDER BY p.name DESC
+					SELECT name, age FROM People p ORDER BY age LIMIT 10|MATCH (p:People) RETURN p.name AS name, p.age AS age ORDER BY p.age LIMIT 10
+					SELECT name FROM People p ORDER BY name ASC|MATCH (p:People) RETURN p.name AS name ORDER BY p.name ASC
+					SELECT name, count(*) FROM People p GROUP BY name ORDER BY name|MATCH (p:People) RETURN p.name AS name, count(*) ORDER BY p.name
+					SELECT name, max(age) FROM People p GROUP BY name ORDER BY name DESC|MATCH (p:People) RETURN p.name AS name, max(p.age) ORDER BY p.name DESC
+					SELECT name FROM People p ORDER BY age|MATCH (p:People) RETURN p.name AS name ORDER BY p.age
+					""")
+	void snapshotOrderBy(String sql, String cypher) {
+
+		var translator = SqlToCypher.defaultTranslator();
+		assertThat(translator.translate(sql)).isEqualTo(cypher);
+	}
+
+	@ParameterizedTest
 	@CsvSource(delimiterString = "|", quoteCharacter = '"', textBlock = """
 			SELECT * FROM People p
 			SELECT name FROM People p

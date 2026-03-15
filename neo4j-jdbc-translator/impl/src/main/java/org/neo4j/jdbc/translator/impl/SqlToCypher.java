@@ -340,6 +340,12 @@ final class SqlToCypher implements Translator {
 
 		private final AtomicBoolean useAliasForVColumn = new AtomicBoolean(true);
 
+		/**
+		 * Registry mapping jOOQ field expressions to their Cypher WITH clause aliases.
+		 * Non-null only during WITH-based translation (GROUP BY with hidden columns, or
+		 * HAVING). Set inside {@link #buildWithClause} and cleared in the {@code finally}
+		 * block of {@link #statement(Select)}.
+		 */
 		private AliasRegistry aliasRegistry;
 
 		private final Map<String, View> views;
@@ -492,7 +498,6 @@ final class SqlToCypher implements Translator {
 				else {
 					effectiveReading = reading;
 					finalResultColumnsSupplier = resultColumnsSupplier;
-					this.aliasRegistry = null;
 				}
 
 				var projection = selectStatement.$distinct()

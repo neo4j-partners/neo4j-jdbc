@@ -44,9 +44,11 @@ Design spec: [group phase 4.md](group%20phase%204.md)
 
 ---
 
-## Phase 5: ORDER BY Alias Resolution + Unified Registry Interception
+## Phase 5: ORDER BY Alias Resolution + Unified Registry Interception — COMPLETE
 
 **Goal**: Add unified alias resolution in `expression(Field<?>)` so both ORDER BY and HAVING (Phase 6) resolve through the `AliasRegistry`. Restructure `buildWithClause()` to set the registry before HAVING translation. Add error detection for ORDER BY on de-scoped variables.
+
+**Status**: COMPLETE. 391 tests, 0 failures, 0 errors.
 
 **Spec reference**: [group phase 4.md §Phase 5](group%20phase%204.md#phase-5-order-by-alias-resolution-with-with)
 
@@ -95,17 +97,17 @@ These test expectations were added during Phase 4 as "current behavior" snapshot
 
 ### Checklist
 
-- [ ] **5.0** Defensive null in non-WITH path: in `statement(Select<?>)`, add `this.aliasRegistry = null` in the else branch (currently line 492). Ensures the registry is explicitly cleared when no WITH clause is needed.
+- [x] **5.0** ~~Defensive null in non-WITH path~~ — REMOVED during review. The `finally` block (5.2) already guarantees cleanup on all paths, making an explicit null in the else branch redundant. Keeping both would imply the `finally` is insufficient.
 
-- [ ] **5.1** Restructure `buildWithClause()` registry timing and simplify `WithClauseResult`:
+- [x] **5.1** Restructure `buildWithClause()` registry timing and simplify `WithClauseResult`:
     - Move `this.aliasRegistry = registry` inside `buildWithClause()`, placed just BEFORE the HAVING condition check (currently line 586), after the SELECT and GROUP BY loops have fully populated the registry.
     - Remove the `registry` field from the `WithClauseResult` record — it becomes `WithClauseResult(OngoingReading reading, Supplier<List<Expression>> returnExpressionsSupplier)`.
     - Remove the `this.aliasRegistry = withResult.registry()` assignment at line 490 in `statement()` — it is now redundant.
     - (See RN-3 for rationale.)
 
-- [ ] **5.2** Add `finally` block for registry cleanup: wrap the body of `statement(Select<?>)` starting from the `needsWithClause` check (line 482) through the final `build()` return in a try-finally that resets `this.aliasRegistry = null`. This prevents state leaks on exceptions and ensures the registry is scoped to exactly one query translation. Early returns before line 482 (empty `$from()`, limit-top-N) are outside the try-finally scope since the registry cannot be set on those paths. (See RN-4 for rationale.)
+- [x] **5.2** Add `finally` block for registry cleanup: wrap the body of `statement(Select<?>)` starting from the `needsWithClause` check (line 482) through the final `build()` return in a try-finally that resets `this.aliasRegistry = null`. This prevents state leaks on exceptions and ensures the registry is scoped to exactly one query translation. Early returns before line 482 (empty `$from()`, limit-top-N) are outside the try-finally scope since the registry cannot be set on those paths. (See RN-4 for rationale.)
 
-- [ ] **5.3** Add unified registry interception to `expression(Field<?>)`: add a **standalone `if` block at the very top** of `expression(Field<?> f, boolean turnUnknownIntoNames)`, BEFORE the existing if-else chain (before the `Param<?>` check at line 1601). This is a standalone block, not an `else if` in the chain:
+- [x] **5.3** Add unified registry interception to `expression(Field<?>)`: add a **standalone `if` block at the very top** of `expression(Field<?> f, boolean turnUnknownIntoNames)`, BEFORE the existing if-else chain (before the `Param<?>` check at line 1601). This is a standalone block, not an `else if` in the chain:
     ```java
     private Expression expression(Field<?> f, boolean turnUnknownIntoNames) {
         // Registry interception — resolve fields to WITH aliases when in WITH scope
@@ -130,11 +132,11 @@ These test expectations were added during Phase 4 as "current behavior" snapshot
 
     The type guard ensures literal values and arithmetic operators (`QOM.Add`, `QOM.Mul`, etc.) skip the resolve entirely — they fall through to normal translation. `FieldMatcher.isAggregate()` must be package-private for this (see 5.4). The `FieldAlias` inclusion is needed because a `FieldAlias` wrapping a `TableField` would otherwise fail the guard — see RN-2.
 
-- [ ] **5.4** Make `FieldMatcher.isAggregate()` package-private: change from `private` to default visibility (line 115 of `FieldMatcher.java`). Required by the type guard in 5.3. *(Promoted from original 6.4.)*
+- [x] **5.4** Make `FieldMatcher.isAggregate()` package-private: change from `private` to default visibility (line 115 of `FieldMatcher.java`). Required by the type guard in 5.3. *(Promoted from original 6.4.)*
 
-- [ ] **5.5** Preserve sort direction: the existing direction extraction in `expression(SortField<?>)` (line 1407) continues to work unchanged. The SortField unwraps to a Field via `s.$field()`, calls `expression(theField)` which now hits the registry interception at 5.3. The sort direction mapping (`"DEFAULT"` → `SortItem.Direction.UNDEFINED`) remains in `expression(SortField<?>)`. No change needed to the SortField method itself — verify with tests.
+- [x] **5.5** Preserve sort direction: the existing direction extraction in `expression(SortField<?>)` (line 1407) continues to work unchanged. The SortField unwraps to a Field via `s.$field()`, calls `expression(theField)` which now hits the registry interception at 5.3. The sort direction mapping (`"DEFAULT"` → `SortItem.Direction.UNDEFINED`) remains in `expression(SortField<?>)`. No change needed to the SortField method itself — verify with tests.
 
-- [ ] **5.6** Error on unresolvable ORDER BY after WITH: modify the catch block in `expression(SortField<?>)` (line 1414). Currently, when `expression(theField)` throws `IllegalArgumentException`, the catch block falls back to `findTableFieldInTables()`. After a WITH clause, this fallback produces syntactically valid but semantically broken Cypher (the variable is out of scope). Add a guard at the **top** of the catch block:
+- [x] **5.6** Error on unresolvable ORDER BY after WITH: modify the catch block in `expression(SortField<?>)` (line 1414). Currently, when `expression(theField)` throws `IllegalArgumentException`, the catch block falls back to `findTableFieldInTables()`. After a WITH clause, this fallback produces syntactically valid but semantically broken Cypher (the variable is out of scope). Add a guard at the **top** of the catch block:
     ```java
     catch (IllegalArgumentException ex) {
         if (this.aliasRegistry != null) {
@@ -147,9 +149,9 @@ These test expectations were added during Phase 4 as "current behavior" snapshot
     ```
     This ensures the fallback only fires when there is no WITH clause (i.e., the original table scope is still accessible). When a WITH clause is present, the error surfaces immediately with a clear message rather than emitting invalid Cypher that would fail at runtime with Neo4j error 42N44. (See RN-1 for the full analysis.)
 
-- [ ] **5.7** Verify non-WITH ORDER BY unchanged: all existing ORDER BY tests (Tier 1 snapshots, non-GROUP-BY queries) must produce identical output. The `aliasRegistry == null` guard ensures the new code path is never entered for queries without a WITH clause.
+- [x] **5.7** Verify non-WITH ORDER BY unchanged: all existing ORDER BY tests (Tier 1 snapshots, non-GROUP-BY queries) must produce identical output. The `aliasRegistry == null` guard ensures the new code path is never entered for queries without a WITH clause.
 
-- [ ] **5.8** Update test expectations: update the two `withClauseGeneration` test cases (see "Existing Test Expectations That Must Change" above) to expect alias-resolved output instead of re-emitted raw expressions.
+- [x] **5.8** Update test expectations: update the two `withClauseGeneration` test cases (see "Existing Test Expectations That Must Change" above) to expect alias-resolved output instead of re-emitted raw expressions.
 
 **Tests**: See [prodTestingPlan.md §Phase 5](prodTestingPlan.md#phase-5-order-by-alias-resolution) (items 5.1-5.3, ~10 test cases). Additional tests needed for:
 - ORDER BY on GROUP BY-only column not in RETURN (valid — WITH alias resolves)
