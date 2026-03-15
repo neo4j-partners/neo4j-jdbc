@@ -340,6 +340,8 @@ final class SqlToCypher implements Translator {
 
 		private final AtomicBoolean useAliasForVColumn = new AtomicBoolean(true);
 
+		private AliasRegistry aliasRegistry;
+
 		private final Map<String, View> views;
 
 		private final Pattern relationshipPattern;
@@ -485,6 +487,7 @@ final class SqlToCypher implements Translator {
 				var withResult = buildWithClause(reading, selectStatement, groupByFields, havingCondition);
 				effectiveReading = withResult.reading();
 				finalResultColumnsSupplier = withResult.returnExpressionsSupplier();
+				this.aliasRegistry = withResult.registry();
 			}
 			else {
 				effectiveReading = reading;
@@ -511,36 +514,23 @@ final class SqlToCypher implements Translator {
 			if (groupByFields.isEmpty()) {
 				return false;
 			}
-			var selectFieldNames = selectStatement.$select()
-				.stream()
-				.map(this::resolveFieldName)
-				.filter(Objects::nonNull)
-				.collect(Collectors.toSet());
+			var selectFields = selectStatement.$select();
 			for (var gf : groupByFields) {
-				if (gf instanceof Field<?> f) {
-					var name = resolveFieldName(f);
-					if (name != null && !selectFieldNames.contains(name)) {
-						return true;
-					}
+				if (gf instanceof Field<?> groupField && !groupByFieldMatchesAnySelectField(groupField, selectFields)) {
+					return true;
 				}
 			}
 			return false;
 		}
 
-		private String resolveFieldName(Object field) {
-			if (field instanceof QOM.FieldAlias<?> fa) {
-				return resolveFieldName(fa.$aliased());
-			}
-			else if (field instanceof TableField<?, ?> tf) {
-				return tf.getName().toUpperCase(Locale.ROOT);
-			}
-			else if (field instanceof Field<?> f) {
-				return f.getName().toUpperCase(Locale.ROOT);
-			}
-			return null;
+		private static boolean groupByFieldMatchesAnySelectField(Field<?> groupField,
+				List<? extends SelectFieldOrAsterisk> selectFields) {
+			return selectFields.stream()
+				.anyMatch(sf -> sf instanceof Field<?> f && FieldMatcher.fieldsMatch(groupField, f));
 		}
 
-		private record WithClauseResult(OngoingReading reading, Supplier<List<Expression>> returnExpressionsSupplier) {
+		private record WithClauseResult(OngoingReading reading, Supplier<List<Expression>> returnExpressionsSupplier,
+				AliasRegistry registry) {
 		}
 
 		/**
@@ -556,6 +546,7 @@ final class SqlToCypher implements Translator {
 			var withExpressions = new ArrayList<IdentifiableElement>();
 			var returnExpressions = new ArrayList<Expression>();
 			var aliasCounter = new AtomicInteger(0);
+			var registry = new AliasRegistry();
 
 			// Translate each SELECT field and alias it for the WITH clause
 			for (var selectField : selectStatement.$select()) {
@@ -571,24 +562,21 @@ final class SqlToCypher implements Translator {
 					}
 					withExpressions.add((IdentifiableElement) expr);
 					returnExpressions.add(Cypher.name(alias));
+					if (selectField instanceof Field<?> f) {
+						registry.register(f, alias);
+					}
 				}
 			}
 
 			// Add GROUP BY fields that are not already in the SELECT
-			var selectFieldNames = selectStatement.$select()
-				.stream()
-				.map(this::resolveFieldName)
-				.filter(Objects::nonNull)
-				.collect(Collectors.toSet());
+			var selectFields = selectStatement.$select();
 			for (var gf : groupByFields) {
-				if (gf instanceof Field<?> f) {
-					var name = resolveFieldName(f);
-					if (name != null && !selectFieldNames.contains(name)) {
-						var expr = expression(f);
-						var alias = "__group_col_" + aliasCounter.getAndIncrement();
-						withExpressions.add((IdentifiableElement) expr.as(alias));
-						// GROUP BY-only fields are not added to returnExpressions
-					}
+				if (gf instanceof Field<?> groupField && !groupByFieldMatchesAnySelectField(groupField, selectFields)) {
+					var expr = expression(groupField);
+					var alias = "__group_col_" + aliasCounter.getAndIncrement();
+					withExpressions.add((IdentifiableElement) expr.as(alias));
+					registry.register(groupField, alias);
+					// GROUP BY-only fields are not added to returnExpressions
 				}
 			}
 
@@ -604,7 +592,7 @@ final class SqlToCypher implements Translator {
 
 			// Capture for lambda
 			var finalReturnExpressions = List.copyOf(returnExpressions);
-			return new WithClauseResult(afterWith, () -> finalReturnExpressions);
+			return new WithClauseResult(afterWith, () -> finalReturnExpressions, registry);
 		}
 
 		/**

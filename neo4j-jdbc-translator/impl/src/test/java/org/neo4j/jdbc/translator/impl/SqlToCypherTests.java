@@ -549,17 +549,18 @@ class SqlToCypherTests {
 	}
 
 	@ParameterizedTest
-	@CsvSource(delimiterString = "|", textBlock = """
-			SELECT name, count(*) FROM People p GROUP BY name|MATCH (p:People) RETURN p.name AS name, count(*)
-			SELECT name, max(age) FROM People p GROUP BY name|MATCH (p:People) RETURN p.name AS name, max(p.age)
-			SELECT name, min(age) FROM People p GROUP BY name|MATCH (p:People) RETURN p.name AS name, min(p.age)
-			SELECT sum(age) FROM People p GROUP BY name|MATCH (p:People) RETURN sum(p.age)
-			SELECT avg(age) FROM People p GROUP BY name|MATCH (p:People) RETURN avg(p.age)
-			SELECT percentileCont(age) FROM People p GROUP BY name|MATCH (p:People) RETURN percentileCont(p.age)
-			SELECT percentileDisc(age) FROM People p GROUP BY name|MATCH (p:People) RETURN percentileDisc(p.age)
-			SELECT stDev(age) FROM People p GROUP BY name|MATCH (p:People) RETURN stDev(p.age)
-			SELECT stDevP(age) FROM People p GROUP BY name|MATCH (p:People) RETURN stDevP(p.age)
-			""")
+	@CsvSource(delimiterString = "|",
+			textBlock = """
+					SELECT name, count(*) FROM People p GROUP BY name|MATCH (p:People) RETURN p.name AS name, count(*)
+					SELECT name, max(age) FROM People p GROUP BY name|MATCH (p:People) RETURN p.name AS name, max(p.age)
+					SELECT name, min(age) FROM People p GROUP BY name|MATCH (p:People) RETURN p.name AS name, min(p.age)
+					SELECT sum(age) FROM People p GROUP BY name|MATCH (p:People) WITH sum(p.age) AS __with_col_0, p.name AS __group_col_1 RETURN __with_col_0
+					SELECT avg(age) FROM People p GROUP BY name|MATCH (p:People) WITH avg(p.age) AS __with_col_0, p.name AS __group_col_1 RETURN __with_col_0
+					SELECT percentileCont(age) FROM People p GROUP BY name|MATCH (p:People) WITH percentileCont(p.age) AS __with_col_0, p.name AS __group_col_1 RETURN __with_col_0
+					SELECT percentileDisc(age) FROM People p GROUP BY name|MATCH (p:People) WITH percentileDisc(p.age) AS __with_col_0, p.name AS __group_col_1 RETURN __with_col_0
+					SELECT stDev(age) FROM People p GROUP BY name|MATCH (p:People) WITH stDev(p.age) AS __with_col_0, p.name AS __group_col_1 RETURN __with_col_0
+					SELECT stDevP(age) FROM People p GROUP BY name|MATCH (p:People) WITH stDevP(p.age) AS __with_col_0, p.name AS __group_col_1 RETURN __with_col_0
+					""")
 	void aggregates(String sql, String cypher) {
 
 		var translator = SqlToCypher.defaultTranslator();
@@ -815,6 +816,167 @@ class SqlToCypherTests {
 			.withJoinColumnsToTypeMappings(Map.of("Orders.CustomerID", "PURCHASED"))
 			.build());
 		assertThat(translator.translate(sqlAndCypher.sql())).isEqualTo(sqlAndCypher.cypher());
+	}
+
+	// -------------------------------------------------------------------------
+	// Tier 1 Regression Snapshots — lock down existing translator behavior
+	// before any production code changes. See prodTesting.md §1.1–1.3.
+	// -------------------------------------------------------------------------
+
+	@ParameterizedTest
+	@CsvSource(delimiterString = "|", quoteCharacter = '"',
+			textBlock = """
+					SELECT * FROM People p|MATCH (p:People) RETURN *
+					SELECT name FROM People p|MATCH (p:People) RETURN p.name AS name
+					SELECT name, age FROM People p WHERE age > 25|MATCH (p:People) WHERE p.age > 25 RETURN p.name AS name, p.age AS age
+					SELECT name FROM People p ORDER BY name|MATCH (p:People) RETURN p.name AS name ORDER BY p.name
+					SELECT name FROM People p ORDER BY name DESC LIMIT 10|MATCH (p:People) RETURN p.name AS name ORDER BY p.name DESC LIMIT 10
+					SELECT DISTINCT name FROM People p|MATCH (p:People) RETURN DISTINCT p.name AS name
+					SELECT name FROM People p WHERE name = 'Alice' ORDER BY age LIMIT 5|MATCH (p:People) WHERE p.name = 'Alice' RETURN p.name AS name ORDER BY p.age LIMIT 5
+					""")
+	void snapshotSimpleSelects(String sql, String cypher) {
+
+		var translator = SqlToCypher.defaultTranslator();
+		assertThat(translator.translate(sql)).isEqualTo(cypher);
+	}
+
+	@ParameterizedTest
+	@CsvSource(delimiterString = "|", textBlock = """
+			SELECT count(*) FROM People p|MATCH (p:People) RETURN count(*)
+			SELECT count(name) FROM People p|MATCH (p:People) RETURN count(p.name)
+			SELECT count(DISTINCT name) FROM People p|MATCH (p:People) RETURN count(DISTINCT p.name)
+			SELECT sum(age) FROM People p|MATCH (p:People) RETURN sum(p.age)
+			SELECT min(age), max(age) FROM People p|MATCH (p:People) RETURN min(p.age), max(p.age)
+			SELECT avg(age) FROM People p|MATCH (p:People) RETURN avg(p.age)
+			""")
+	void snapshotGlobalAggregates(String sql, String cypher) {
+
+		var translator = SqlToCypher.defaultTranslator();
+		assertThat(translator.translate(sql)).isEqualTo(cypher);
+	}
+
+	// Note: these three cases intentionally overlap with the first three entries in
+	// aggregates() above. The snapshot captures the same behavior but serves a different
+	// purpose — it locks down the GROUP-BY-matches-SELECT path as a regression guard.
+	@ParameterizedTest
+	@CsvSource(delimiterString = "|", textBlock = """
+			SELECT name, count(*) FROM People p GROUP BY name|MATCH (p:People) RETURN p.name AS name, count(*)
+			SELECT name, max(age) FROM People p GROUP BY name|MATCH (p:People) RETURN p.name AS name, max(p.age)
+			SELECT name, min(age) FROM People p GROUP BY name|MATCH (p:People) RETURN p.name AS name, min(p.age)
+			""")
+	void snapshotGroupByMatchingSelect(String sql, String cypher) {
+
+		var translator = SqlToCypher.defaultTranslator();
+		assertThat(translator.translate(sql)).isEqualTo(cypher);
+	}
+
+	@ParameterizedTest
+	@CsvSource(delimiterString = "|",
+			textBlock = """
+					SELECT p.name, m.title FROM People p JOIN Movie m ON p.id = m.person_id|MATCH (p:People)<-[person_id:PERSON_ID]-(m:Movie) RETURN p.name, m.title
+					SELECT p.name FROM People p JOIN Movie m ON p.id = m.person_id WHERE m.released > 2000|MATCH (p:People)<-[person_id:PERSON_ID]-(m:Movie) WHERE m.released > 2000 RETURN p.name
+					SELECT p.name FROM People p JOIN Movie m ON p.id = m.person_id ORDER BY m.released LIMIT 5|MATCH (p:People)<-[person_id:PERSON_ID]-(m:Movie) RETURN p.name ORDER BY m.released LIMIT 5
+					""")
+	void snapshotJoins(String sql, String cypher) {
+
+		var translator = SqlToCypher.defaultTranslator();
+		assertThat(translator.translate(sql)).isEqualTo(cypher);
+	}
+
+	@ParameterizedTest
+	@CsvSource(delimiterString = "|", quoteCharacter = '"',
+			textBlock = """
+					INSERT INTO People (name, age) VALUES ('Alice', 30)|CREATE (people:People {name: 'Alice', age: 30})
+					UPDATE People SET age = 31 WHERE name = 'Alice'|MATCH (people:People) WHERE people.name = 'Alice' SET people.age = 31
+					DELETE FROM People WHERE name = 'Alice'|MATCH (people:People) WHERE people.name = 'Alice' DELETE people
+					INSERT INTO Movie(title) VALUES(?) ON DUPLICATE KEY IGNORE|MERGE (movie:Movie {title: $1})
+					""")
+	void snapshotDml(String sql, String cypher) {
+
+		var translator = SqlToCypher.defaultTranslator();
+		assertThat(translator.translate(sql)).isEqualTo(cypher);
+	}
+
+	@ParameterizedTest
+	@CsvSource(delimiterString = "|", quoteCharacter = '"',
+			textBlock = """
+					SELECT name FROM People p WHERE age = 25|MATCH (p:People) WHERE p.age = 25 RETURN p.name AS name
+					SELECT name FROM People p WHERE age > 25|MATCH (p:People) WHERE p.age > 25 RETURN p.name AS name
+					SELECT name FROM People p WHERE age >= 25 AND name = 'Alice'|MATCH (p:People) WHERE (p.age >= 25 AND p.name = 'Alice') RETURN p.name AS name
+					SELECT name FROM People p WHERE age IN (25, 30, 35)|MATCH (p:People) WHERE p.age IN [25, 30, 35] RETURN p.name AS name
+					SELECT name FROM People p WHERE age IS NULL|MATCH (p:People) WHERE p.age IS NULL RETURN p.name AS name
+					SELECT name FROM People p WHERE age IS NOT NULL|MATCH (p:People) WHERE p.age IS NOT NULL RETURN p.name AS name
+					SELECT name FROM People p WHERE age BETWEEN 20 AND 30|MATCH (p:People) WHERE (20 <= p.age AND p.age <= 30) RETURN p.name AS name
+					SELECT name FROM People p WHERE name LIKE 'A%'|MATCH (p:People) WHERE p.name STARTS WITH 'A' RETURN p.name AS name
+					SELECT name FROM People p WHERE NOT (age > 50)|MATCH (p:People) WHERE NOT (p.age > 50) RETURN p.name AS name
+					""")
+	void snapshotPredicates(String sql, String cypher) {
+
+		var translator = SqlToCypher.defaultTranslator();
+		assertThat(translator.translate(sql)).isEqualTo(cypher);
+	}
+
+	@ParameterizedTest
+	@CsvSource(delimiterString = "|", quoteCharacter = '"',
+			textBlock = """
+					SELECT CASE WHEN age > 30 THEN 'old' ELSE 'young' END FROM People p|MATCH (p:People) RETURN CASE WHEN p.age > 30 THEN 'old' ELSE 'young' END
+					""")
+	void snapshotCaseExpressions(String sql, String cypher) {
+
+		var translator = SqlToCypher.defaultTranslator();
+		assertThat(translator.translate(sql)).isEqualTo(cypher);
+	}
+
+	@ParameterizedTest
+	@CsvSource(delimiterString = "|",
+			textBlock = """
+					SELECT DISTINCT name FROM People p|MATCH (p:People) RETURN DISTINCT p.name AS name
+					SELECT DISTINCT name, age FROM People p WHERE age > 25|MATCH (p:People) WHERE p.age > 25 RETURN DISTINCT p.name AS name, p.age AS age
+					""")
+	void snapshotDistinct(String sql, String cypher) {
+
+		var translator = SqlToCypher.defaultTranslator();
+		assertThat(translator.translate(sql)).isEqualTo(cypher);
+	}
+
+	@ParameterizedTest
+	@CsvSource(delimiterString = "|", quoteCharacter = '"', textBlock = """
+			SELECT * FROM People p
+			SELECT name FROM People p
+			SELECT name FROM People p ORDER BY name DESC LIMIT 10
+			SELECT count(*) FROM People p
+			SELECT sum(age) FROM People p
+			SELECT min(age), max(age) FROM People p
+			SELECT avg(age) FROM People p
+			INSERT INTO People (name, age) VALUES ('Alice', 30)
+			UPDATE People SET age = 31 WHERE name = 'Alice'
+			DELETE FROM People WHERE name = 'Alice'
+			""")
+	void nonGroupByPathNeverProducesWithClause(String sql) {
+
+		var translator = SqlToCypher.defaultTranslator();
+		var result = translator.translate(sql);
+		assertThat(result).doesNotContainPattern("\\bWITH\\b");
+	}
+
+	// -------------------------------------------------------------------------
+	// Tier 4 WITH Clause Generation — Phase 4 tests.
+	// See prodTesting.md §4.1–4.4.
+	// -------------------------------------------------------------------------
+
+	@ParameterizedTest
+	@CsvSource(delimiterString = "|",
+			textBlock = """
+					SELECT name, sum(age) FROM People p GROUP BY name, department|MATCH (p:People) WITH p.name AS name, sum(p.age) AS __with_col_0, p.department AS __group_col_1 RETURN name, __with_col_0
+					SELECT count(*) FROM Customers c JOIN Orders o ON c.id = o.customer_id GROUP BY c.name|MATCH (c:Customers)<-[customer_id:CUSTOMER_ID]-(o:Orders) WITH count(*) AS __with_col_0, c.name AS __group_col_1 RETURN __with_col_0
+					SELECT c.name, count(*) FROM Customers c JOIN Orders o ON c.id = o.customer_id GROUP BY c.name|MATCH (c:Customers)<-[customer_id:CUSTOMER_ID]-(o:Orders) RETURN c.name, count(*)
+					SELECT name, count(*), sum(age), avg(age) FROM People p GROUP BY name|MATCH (p:People) RETURN p.name AS name, count(*), sum(p.age), avg(p.age)
+					SELECT count(*), sum(age) FROM People p GROUP BY name|MATCH (p:People) WITH count(*) AS __with_col_0, sum(p.age) AS __with_col_1, p.name AS __group_col_2 RETURN __with_col_0, __with_col_1
+					""")
+	void withClauseGeneration(String sql, String cypher) {
+
+		var translator = SqlToCypher.defaultTranslator();
+		assertThat(translator.translate(sql)).isEqualTo(cypher);
 	}
 
 	private record SqlAndCypher(String name, String sql, String cypher) {
