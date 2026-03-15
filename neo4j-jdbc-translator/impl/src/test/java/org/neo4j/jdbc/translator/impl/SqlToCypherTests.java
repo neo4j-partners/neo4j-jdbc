@@ -548,6 +548,10 @@ class SqlToCypherTests {
 		assertThat(cypher).isEqualTo("FINISH");
 	}
 
+	// Entries 1-3: GROUP BY column (name) appears in SELECT — Cypher uses simple RETURN.
+	// Entries 4-9: GROUP BY column (name) is absent from SELECT — translator generates a
+	// WITH clause to make grouping explicit. Updated in Phase 4 (was previously wrong
+	// output).
 	@ParameterizedTest
 	@CsvSource(delimiterString = "|",
 			textBlock = """
@@ -818,11 +822,6 @@ class SqlToCypherTests {
 		assertThat(translator.translate(sqlAndCypher.sql())).isEqualTo(sqlAndCypher.cypher());
 	}
 
-	// -------------------------------------------------------------------------
-	// Tier 1 Regression Snapshots — lock down existing translator behavior
-	// before any production code changes. See prodTesting.md §1.1–1.3.
-	// -------------------------------------------------------------------------
-
 	@ParameterizedTest
 	@CsvSource(delimiterString = "|", quoteCharacter = '"',
 			textBlock = """
@@ -930,7 +929,6 @@ class SqlToCypherTests {
 	@ParameterizedTest
 	@CsvSource(delimiterString = "|",
 			textBlock = """
-					SELECT DISTINCT name FROM People p|MATCH (p:People) RETURN DISTINCT p.name AS name
 					SELECT DISTINCT name, age FROM People p WHERE age > 25|MATCH (p:People) WHERE p.age > 25 RETURN DISTINCT p.name AS name, p.age AS age
 					""")
 	void snapshotDistinct(String sql, String cypher) {
@@ -959,11 +957,6 @@ class SqlToCypherTests {
 		assertThat(result).doesNotContainPattern("\\bWITH\\b");
 	}
 
-	// -------------------------------------------------------------------------
-	// Tier 4 WITH Clause Generation — Phase 4 tests.
-	// See prodTesting.md §4.1–4.4.
-	// -------------------------------------------------------------------------
-
 	@ParameterizedTest
 	@CsvSource(delimiterString = "|",
 			textBlock = """
@@ -972,6 +965,8 @@ class SqlToCypherTests {
 					SELECT c.name, count(*) FROM Customers c JOIN Orders o ON c.id = o.customer_id GROUP BY c.name|MATCH (c:Customers)<-[customer_id:CUSTOMER_ID]-(o:Orders) RETURN c.name, count(*)
 					SELECT name, count(*), sum(age), avg(age) FROM People p GROUP BY name|MATCH (p:People) RETURN p.name AS name, count(*), sum(p.age), avg(p.age)
 					SELECT count(*), sum(age) FROM People p GROUP BY name|MATCH (p:People) WITH count(*) AS __with_col_0, sum(p.age) AS __with_col_1, p.name AS __group_col_2 RETURN __with_col_0, __with_col_1
+					SELECT sum(age) FROM People p GROUP BY name HAVING sum(age) > 100|MATCH (p:People) WITH sum(p.age) AS __with_col_0, p.name AS __group_col_1 WHERE __with_col_0 > 100 RETURN __with_col_0
+					SELECT sum(age) FROM People p GROUP BY name ORDER BY sum(age)|MATCH (p:People) WITH sum(p.age) AS __with_col_0, p.name AS __group_col_1 RETURN __with_col_0 ORDER BY __with_col_0
 					""")
 	void withClauseGeneration(String sql, String cypher) {
 

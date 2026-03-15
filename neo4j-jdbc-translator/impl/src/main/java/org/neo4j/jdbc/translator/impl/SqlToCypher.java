@@ -481,26 +481,31 @@ final class SqlToCypher implements Translator {
 			var groupByFields = selectStatement.$groupBy();
 			boolean needsWithClause = havingCondition != null || requiresWithForGroupBy(selectStatement);
 
-			OngoingReading effectiveReading;
-			Supplier<List<Expression>> finalResultColumnsSupplier;
-			if (needsWithClause) {
-				var withResult = buildWithClause(reading, selectStatement, groupByFields, havingCondition);
-				effectiveReading = withResult.reading();
-				finalResultColumnsSupplier = withResult.returnExpressionsSupplier();
-				this.aliasRegistry = withResult.registry();
-			}
-			else {
-				effectiveReading = reading;
-				finalResultColumnsSupplier = resultColumnsSupplier;
-			}
+			try {
+				OngoingReading effectiveReading;
+				Supplier<List<Expression>> finalResultColumnsSupplier;
+				if (needsWithClause) {
+					var withResult = buildWithClause(reading, selectStatement, groupByFields, havingCondition);
+					effectiveReading = withResult.reading();
+					finalResultColumnsSupplier = withResult.returnExpressionsSupplier();
+				}
+				else {
+					effectiveReading = reading;
+					finalResultColumnsSupplier = resultColumnsSupplier;
+					this.aliasRegistry = null;
+				}
 
-			var projection = selectStatement.$distinct()
-					? effectiveReading.returningDistinct(finalResultColumnsSupplier.get())
-					: effectiveReading.returning(finalResultColumnsSupplier.get());
-			var orderedProjection = projection
-				.orderBy(selectStatement.$orderBy().stream().map(this::expression).toList());
+				var projection = selectStatement.$distinct()
+						? effectiveReading.returningDistinct(finalResultColumnsSupplier.get())
+						: effectiveReading.returning(finalResultColumnsSupplier.get());
+				var orderedProjection = projection
+					.orderBy(selectStatement.$orderBy().stream().map(this::expression).toList());
 
-			return addLimit(forceLimit, selectStatement, orderedProjection).build();
+				return addLimit(forceLimit, selectStatement, orderedProjection).build();
+			}
+			finally {
+				this.aliasRegistry = null;
+			}
 		}
 
 		/**
@@ -529,8 +534,7 @@ final class SqlToCypher implements Translator {
 				.anyMatch(sf -> sf instanceof Field<?> f && FieldMatcher.fieldsMatch(groupField, f));
 		}
 
-		private record WithClauseResult(OngoingReading reading, Supplier<List<Expression>> returnExpressionsSupplier,
-				AliasRegistry registry) {
+		private record WithClauseResult(OngoingReading reading, Supplier<List<Expression>> returnExpressionsSupplier) {
 		}
 
 		/**
@@ -580,6 +584,11 @@ final class SqlToCypher implements Translator {
 				}
 			}
 
+			// Set the registry before HAVING translation so that the unified
+			// interception in expression(Field<?>) can resolve aggregates and
+			// column references to their WITH aliases during condition()
+			this.aliasRegistry = registry;
+
 			var withStep = reading.with(withExpressions);
 
 			OngoingReading afterWith;
@@ -592,7 +601,7 @@ final class SqlToCypher implements Translator {
 
 			// Capture for lambda
 			var finalReturnExpressions = List.copyOf(returnExpressions);
-			return new WithClauseResult(afterWith, () -> finalReturnExpressions, registry);
+			return new WithClauseResult(afterWith, () -> finalReturnExpressions);
 		}
 
 		/**
@@ -1412,6 +1421,12 @@ final class SqlToCypher implements Translator {
 					col = expression(theField);
 				}
 				catch (IllegalArgumentException ex) {
+					if (this.aliasRegistry != null) {
+						throw new IllegalArgumentException(
+								String.format("ORDER BY references field '%s' which is not in scope after WITH clause",
+										theField.getName()),
+								ex);
+					}
 					if (theField instanceof TableField<?, ?> tf && tf.getTable() == null) {
 						col = findTableFieldInTables(tf, false, false);
 					}
@@ -1597,6 +1612,15 @@ final class SqlToCypher implements Translator {
 
 		@SuppressWarnings({ "NestedIfDepth", "squid:S3776", "squid:S138" })
 		private Expression expression(Field<?> f, boolean turnUnknownIntoNames) {
+
+			// Registry interception — resolve fields to WITH aliases when in WITH scope
+			if (this.aliasRegistry != null && (f instanceof TableField<?, ?> || FieldMatcher.isAggregate(f)
+					|| f instanceof QOM.FieldAlias<?>)) {
+				String alias = this.aliasRegistry.resolve(f);
+				if (alias != null) {
+					return Cypher.name(alias);
+				}
+			}
 
 			if (f instanceof Param<?> p) {
 				if (p.$inline()) {

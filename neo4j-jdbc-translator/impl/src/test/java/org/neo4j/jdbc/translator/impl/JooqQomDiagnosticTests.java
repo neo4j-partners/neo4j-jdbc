@@ -19,14 +19,9 @@
 package org.neo4j.jdbc.translator.impl;
 
 import org.jooq.Asterisk;
-import org.jooq.DSLContext;
 import org.jooq.Field;
-import org.jooq.Parser;
-import org.jooq.Select;
 import org.jooq.TableField;
-import org.jooq.impl.DSL;
 import org.jooq.impl.QOM;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -44,23 +39,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * @author Ryan Knight
  */
-class JooqQomDiagnosticTests {
-
-	private static DSLContext dsl;
-
-	private static Parser parser;
-
-	@BeforeAll
-	static void initParser() {
-		dsl = DSL.using(org.jooq.SQLDialect.DEFAULT);
-		parser = dsl.parser();
-	}
-
-	private Select<?> parseSelect(String sql) {
-		var query = parser.parseQuery(sql);
-		assertThat(query).isInstanceOf(Select.class);
-		return (Select<?>) query;
-	}
+class JooqQomDiagnosticTests extends QomTestSupport {
 
 	// -------------------------------------------------------------------------
 	// HAVING: QOM structure

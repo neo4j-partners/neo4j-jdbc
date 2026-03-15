@@ -112,7 +112,7 @@ final class FieldMatcher {
 		return a.getName().equalsIgnoreCase(b.getName());
 	}
 
-	private static boolean isAggregate(Field<?> f) {
+	static boolean isAggregate(Field<?> f) {
 		return f instanceof QOM.Count || f instanceof QOM.Sum || f instanceof QOM.Min || f instanceof QOM.Max
 				|| f instanceof QOM.Avg || f instanceof QOM.StddevSamp || f instanceof QOM.StddevPop;
 	}

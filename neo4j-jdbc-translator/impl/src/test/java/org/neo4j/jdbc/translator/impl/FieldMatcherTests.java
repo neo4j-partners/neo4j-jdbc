@@ -18,14 +18,8 @@
  */
 package org.neo4j.jdbc.translator.impl;
 
-import org.jooq.DSLContext;
 import org.jooq.Field;
-import org.jooq.Parser;
-import org.jooq.Select;
-import org.jooq.SelectFieldOrAsterisk;
-import org.jooq.impl.DSL;
 import org.jooq.impl.QOM;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -39,41 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * @author Ryan Knight
  */
-class FieldMatcherTests {
-
-	private static DSLContext dsl;
-
-	private static Parser parser;
-
-	@BeforeAll
-	static void initParser() {
-		dsl = DSL.using(org.jooq.SQLDialect.DEFAULT);
-		parser = dsl.parser();
-	}
-
-	private Select<?> parseSelect(String sql) {
-		var query = parser.parseQuery(sql);
-		assertThat(query).isInstanceOf(Select.class);
-		return (Select<?>) query;
-	}
-
-	/**
-	 * Extracts a {@link Field} from a {@link SelectFieldOrAsterisk}, unwrapping any alias
-	 * wrapper. The returned field is the underlying expression (not the alias).
-	 */
-	private static Field<?> unwrapAlias(SelectFieldOrAsterisk sfa) {
-		if (sfa instanceof QOM.FieldAlias<?> fa) {
-			return fa.$field();
-		}
-		return (Field<?>) sfa;
-	}
-
-	/**
-	 * Casts a {@link SelectFieldOrAsterisk} to {@link Field} without unwrapping aliases.
-	 */
-	private static Field<?> asField(SelectFieldOrAsterisk sfa) {
-		return (Field<?>) sfa;
-	}
+class FieldMatcherTests extends QomTestSupport {
 
 	// -------------------------------------------------------------------------
 	// Column reference matching

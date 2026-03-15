@@ -232,6 +232,150 @@ Sequential ──────────── Phase 7 (DISTINCT, LIMIT, harden
 
 ---
 
+## Open Questions — Parallel Group 2 (Phases 5 & 6)
+
+### Q1: Parallel Group 2 contradicts the dependency graph
+
+The parallelization strategy (lines 25-28) places Phase 5 and Phase 6 in **Parallel Group 2** with "Medium" conflict risk. However, the dependency graph in `group_phase_4_plan.md` (line 303) explicitly shows `Phase 5 → Phase 6` as **sequential**, and the Phase 6 checklist depends on four Phase 5 deliverables:
+
+- **5.1** (registry timing restructure) — Phase 6's `havingCondition()` reads `this.aliasRegistry` which Phase 5 moves into `buildWithClause()`
+- **5.3** (unified `expression(Field<?>)` interception) — Phase 6's HAVING alias resolution relies on this to translate `count(*)` → `__with_col_0` in the WHERE clause
+- **5.4** (`isAggregate()` visibility) — Phase 6's `collectAggregates()` utility calls this
+- **5.2** (`finally` cleanup block) — Phase 6 assumes registry lifecycle is managed
+
+**Question**: Should Parallel Group 2 be changed to sequential (Phase 5 → Phase 6), matching the dependency graph? Or is there a way to factor out the shared infrastructure so the phases can truly run in parallel?
+
+**Resolution**: Changed to sequential. Phase 5 → Phase 6. The dependency is real — Phase 6 cannot start until Phase 5's unified interception, registry timing, and `isAggregate()` visibility are in place.
+
+**Impact on parallelization strategy**: Update the diagram in lines 17-30 to remove Parallel Group 2 and show Phases 5-7 as fully sequential after Phase 4.
+
+### Q2: Existing test expectations at lines 968-969 are known-broken
+
+The `withClauseGeneration` tests added in Phase 4 include two cases with intentionally incorrect expectations that reflect the current (pre-Phase 5/6) behavior:
+
+- **Line 968** (HAVING): expects `WHERE sum(p.age) > 100` — but `p` is de-scoped after the WITH clause. Correct output should be `WHERE __with_col_0 > 100`.
+- **Line 969** (ORDER BY): expects `ORDER BY sum(p.age)` — same issue. Correct output should be `ORDER BY __with_col_0`.
+
+These tests currently PASS because the unified registry interception (Phase 5, item 5.3) hasn't been implemented yet, so aggregates are re-translated rather than resolved to aliases.
+
+**Question**: Which phase is responsible for updating each expectation? Phase 5's unified interception (5.3) will fix BOTH ORDER BY and HAVING resolution in one change — meaning Phase 5 would break line 968 (HAVING) even though HAVING is nominally Phase 6's domain. Should Phase 5 update both expectations, or should line 968 be deferred?
+
+**Recommendation**: Phase 5 updates BOTH expectations. The unified interception (5.3) is a single atomic change — once it lands, both ORDER BY and HAVING resolve through the registry. Leaving line 968 broken would violate the "all tests green after each phase" quality gate (BP-7 in `group_phase_4_plan.md`). This is already aligned with `group_phase_4_plan.md` item 5.8 and its "Existing Test Expectations That Must Change" section, which explicitly lists both lines.
+
+**Note**: This is consistent, not overlapping — `group_phase_4_plan.md` already accounts for this. No change needed to either document beyond this resolution.
+
+### Q3: `collectAggregates()` insertion point in `buildWithClause()`
+
+Phase 6.4 says to integrate `collectAggregates()` "after the SELECT and GROUP BY loops (line 582) and BEFORE `reading.with(withExpressions)` (line 583)." Looking at the current code:
+
+```java
+// line 581: }  (end of GROUP BY loop)
+// line 582: (blank)
+// line 583: var withStep = reading.with(withExpressions);
+```
+
+The HAVING aggregate injection must add to `withExpressions` between lines 581 and 583. But `this.aliasRegistry` is currently set at line 490 (after `buildWithClause()` returns), and Phase 5.1 moves it to "just BEFORE the HAVING condition check" at line 586 — which is AFTER `reading.with()` at line 583.
+
+**Question**: Phase 6.4 needs the registry populated (to call `registry.resolve(agg)` for dedup), but it also needs to run before `reading.with()`. Phase 5.1 sets the registry before the HAVING condition check (line 586), not before line 583. Should Phase 5.1's registry assignment be moved earlier — to just after the GROUP BY loop (line 581) — so Phase 6.4 can use it for dedup AND inject hidden columns before `reading.with()`?
+
+**Recommendation**: Yes — move the registry assignment in Phase 5.1 to just after the GROUP BY loop ends (line 581), before `reading.with()` at line 583. The registry is fully populated at that point (both SELECT and GROUP BY loops are done), so this is safe. The new order in `buildWithClause()` becomes:
+
+```
+1. SELECT loop (populates registry with select fields)
+2. GROUP BY loop (populates registry with group-only fields)
+3. this.aliasRegistry = registry;          ← moved here (Phase 5.1)
+4. [Phase 6.4 injection point: collectAggregates → dedup → add hidden cols]
+5. var withStep = reading.with(withExpressions);
+6. havingCondition() call (reads registry via expression(Field<?>))
+```
+
+This is a GAP in `group_phase_4_plan.md` — item 5.1 says "just BEFORE the HAVING condition check" but should say "just AFTER the GROUP BY loop, BEFORE `reading.with()`." Update `group_phase_4_plan.md` item 5.1 to reflect this earlier placement. Without this fix, Phase 6.4 cannot deduplicate HAVING aggregates against the registry.
+
+**Impact**: Also affects BP-6 in `group_phase_4_plan.md` — the calling-context trace for `buildWithClause()` SELECT/GROUP BY loops says "registry not yet assigned to `this.aliasRegistry`, so the interception is inactive." With the earlier assignment, the interception WOULD be active during the Phase 6.4 HAVING aggregate collection. But this is safe because `collectAggregates()` walks the jOOQ condition tree directly — it doesn't call `expression(Field<?>)`. The `expression(agg)` call in 6.4 step 3 translates HAVING-only aggregates for the WITH clause, which should NOT resolve via the registry (they're not registered yet). **Clarification needed**: Phase 6.4 step 3 must call `expression(agg)` BEFORE registering the aggregate — otherwise the registry interception would short-circuit the translation. Document this ordering constraint in Phase 6.4.
+
+### Q4: Phase 5 unified interception also fixes HAVING — scope overlap
+
+Phase 5.3 adds the type-guarded registry check to `expression(Field<?>)`. This check runs for ALL field resolution when the registry is non-null — including fields inside HAVING conditions (since `havingCondition()` at line 587 calls `condition(c)` which eventually calls `expression(Field<?>)`).
+
+This means Phase 5 effectively fixes simple HAVING alias resolution as a side effect, even though HAVING is Phase 6's responsibility. The only thing Phase 6 uniquely adds is:
+- `collectAggregates()` for HAVING-only hidden columns
+- `havingCondition()` signature cleanup
+
+**Question**: Should the testing plan acknowledge that Phase 5's unified interception is the mechanism that makes HAVING work, and Phase 6 is really about the "HAVING aggregate NOT in SELECT" edge case? This affects which tests belong where — simple HAVING tests (§6.1) might be more naturally validated in Phase 5.
+
+**Recommendation**: Yes — acknowledge the scope overlap and sharpen the phase boundaries. After Phase 5, simple HAVING (where the HAVING aggregate is already in SELECT) works automatically. The testing plan should reflect this:
+
+- **Phase 5 tests should include**: simple HAVING where the aggregate IS in SELECT (e.g., `SELECT name, count(*) AS cnt FROM People p GROUP BY name HAVING count(*) > 5`). This validates the unified interception end-to-end for both ORDER BY and HAVING.
+- **Phase 6 tests focus exclusively on**: HAVING with aggregates NOT in SELECT (hidden columns), compound HAVING, arithmetic in HAVING, HAVING-by-alias edge cases, and `collectAggregates()` unit tests.
+
+This reframing matches reality: Phase 5 delivers the interception mechanism, Phase 6 delivers the "hidden aggregate" feature. Update `prodTestingPlan.md` Phase 5 test section to add ~3 simple HAVING validation cases, and narrow Phase 6 §6.1 to only cover the NOT-in-SELECT case. This also reduces Phase 6's scope and potential for conflicts.
+
+### Q5: `expression(SortField<?>)` existing catch block interaction with 5.6
+
+The `expression(SortField<?>)` method (lines 1403-1428) already has a try-catch for `IllegalArgumentException` (lines 1414-1417) that handles unresolved `TableField` lookups. Phase 5.6 proposes throwing `IllegalArgumentException` for de-scoped ORDER BY fields.
+
+**Question**: Will the existing catch block at line 1414 inadvertently swallow the new Phase 5.6 error? The catch filters on `theField instanceof TableField<?, ?> tf && tf.getTable() == null`, which would NOT match a table-qualified field like `p.age` — but it's worth confirming in the test plan that de-scoped error detection works correctly given this existing exception handling.
+
+**Resolution**: Already addressed by RN-1 in `group_phase_4_plan.md`. The implementation plan places the `aliasRegistry != null` guard at the TOP of the catch block, before the `findTableFieldInTables()` fallback. The catch block won't swallow the error because the guard re-throws immediately. The existing `tf.getTable() == null` filter only fires for non-WITH queries (when `aliasRegistry` is null). Add a specific test case for this in Phase 5 tests: ORDER BY on a table-qualified field (e.g., `p.age`) not in the registry, WITH clause present — should throw, not silently produce broken Cypher.
+
+### Q6: `havingCondition()` unused parameter cleanup timing
+
+The `withExpressions` parameter in `havingCondition(org.jooq.Condition c, List<IdentifiableElement> withExpressions)` at line 603 is already unused (the body is just `return condition(c)`). Phase 6.5 removes it.
+
+**Question**: Since Phase 5 restructures the `buildWithClause()` internals (items 5.1-5.2) and touches the call site area around line 587, should Phase 5 preemptively remove this dead parameter to reduce Phase 6's merge surface? Or leave it to keep Phase 5 strictly scoped to ORDER BY?
+
+**Recommendation**: Phase 5 should remove it. Rationale:
+1. Phase 5 already touches the call site (line 587) when restructuring registry timing
+2. The parameter is dead code NOW (Phase 4 left it unused) — removing dead code in the area you're already modifying is clean practice
+3. It removes one item from Phase 6's checklist, reducing Phase 6's scope
+4. Since Phases 5 and 6 are now sequential (Q1), there's no merge risk — Phase 6 simply starts with the cleaner signature
+
+Add this to `group_phase_4_plan.md` Phase 5 as a new item 5.9, and remove item 6.5 from Phase 6.
+
+---
+
+### Cross-Document Overlap Analysis: `prodTestingPlan.md` vs `group_phase_4_plan.md`
+
+The two documents serve different purposes but have significant overlap in Phase 5-6 that could cause confusion or conflicting instructions for an implementing agent:
+
+**What overlaps:**
+
+| Topic | `prodTestingPlan.md` | `group_phase_4_plan.md` |
+|-------|---------------------|------------------------|
+| Phase 5/6 checklist items | §Phase 5/6 test checklists | §Phase 5/6 implementation checklists |
+| Test expectations to update | Q2 (lines 968-969) | "Existing Test Expectations That Must Change" section |
+| Registry timing | Q3 (insertion point) | Item 5.1 + RN-3 |
+| Catch block interaction | Q5 | RN-1 |
+| Scope of Phase 5 vs 6 | Q4 (which tests where) | Phase 5 goal statement + dependency graph |
+
+**What doesn't overlap (each doc is authoritative):**
+
+- `prodTestingPlan.md` is authoritative for: test case specifications (SQL/Cypher pairs), test placement (which file), tier structure, integration test specs (§8.1-8.19), quality gates for test counts
+- `group_phase_4_plan.md` is authoritative for: production code changes (method edits, new methods), code-level implementation details (type guards, catch block placement), implementation best practices (BP-1 through BP-8), review notes (RN-1 through RN-5)
+
+**Recommendation to minimize conflict:**
+
+1. **Single source of truth per concern.** Don't duplicate implementation details in `prodTestingPlan.md` — reference `group_phase_4_plan.md` instead. The testing plan should specify WHAT to test (SQL input, expected Cypher output, edge cases), not HOW the production code works.
+
+2. **Consolidate the Q/A resolutions.** The questions in this section that are already addressed in `group_phase_4_plan.md` (Q2, Q5) should note "already resolved in `group_phase_4_plan.md`" rather than providing independent analysis that could drift.
+
+3. **Flag the GAP.** Q3 (registry timing for Phase 6.4) is a real gap — `group_phase_4_plan.md` item 5.1 says "before HAVING condition check" but needs to say "after GROUP BY loop, before `reading.with()`." This must be fixed in `group_phase_4_plan.md` before Phase 5 implementation starts.
+
+4. **Update the parallelization diagram.** Remove Parallel Group 2 from `prodTestingPlan.md` lines 17-30. Replace with:
+   ```
+   Phase 4 (complete) → Phase 5 → Phase 6 → Phase 7
+   ```
+   All sequential. No parallel group for Phases 5-7.
+
+5. **Scope minimization for Phase 6.** With Q4's recommendation (move simple HAVING tests to Phase 5) and Q6's recommendation (move `havingCondition()` cleanup to Phase 5), Phase 6 reduces to:
+   - `collectAggregates()` utility + tests (6.2, 6.3)
+   - Hidden HAVING column integration (6.4)
+   - Verification tests for HAVING-only aggregates, compound HAVING, HAVING-by-alias (6.6-6.8)
+
+   This is a cleaner, smaller scope that touches fewer lines in `SqlToCypher.java` — just `buildWithClause()` for the aggregate injection, plus the new utility method.
+
+---
+
 ## Final Validation
 
 - [ ] Run full baseline capture: `test.sh --step 1 through 5 --output final`
