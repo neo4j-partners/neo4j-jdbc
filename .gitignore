@@ -35,3 +35,7 @@ dependency-reduced-pom.xml
 .env
 Neo4j-*-Created-*-*-*.txt
 .flattened-pom.xml
+
+### Research notes ###
+research/
+research_logs/

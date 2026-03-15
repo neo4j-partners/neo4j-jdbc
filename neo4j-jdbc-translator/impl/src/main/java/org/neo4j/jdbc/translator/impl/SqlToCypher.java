@@ -58,6 +58,7 @@ import org.jooq.CreateTableElementListStep;
 import org.jooq.DSLContext;
 import org.jooq.False;
 import org.jooq.Field;
+import org.jooq.GroupField;
 import org.jooq.Name;
 import org.jooq.Null;
 import org.jooq.Param;
@@ -78,6 +79,7 @@ import org.jooq.impl.DSL;
 import org.jooq.impl.ParserException;
 import org.jooq.impl.QOM;
 import org.jooq.impl.QOM.TableAlias;
+import org.neo4j.cypherdsl.core.AliasedExpression;
 import org.neo4j.cypherdsl.core.Case;
 import org.neo4j.cypherdsl.core.Condition;
 import org.neo4j.cypherdsl.core.Cypher;
@@ -472,12 +474,146 @@ final class SqlToCypher implements Translator {
 
 			var reading = cbvs.isEmpty() ? createOngoingReadingFromSources(selectStatement)
 					: createOngoingReadingFromViews(selectStatement, cbvs);
-			var projection = selectStatement.$distinct() ? reading.returningDistinct(resultColumnsSupplier.get())
-					: reading.returning(resultColumnsSupplier.get());
+
+			var havingCondition = selectStatement.$having();
+			var groupByFields = selectStatement.$groupBy();
+			boolean needsWithClause = havingCondition != null || requiresWithForGroupBy(selectStatement);
+
+			OngoingReading effectiveReading;
+			Supplier<List<Expression>> finalResultColumnsSupplier;
+			if (needsWithClause) {
+				var withResult = buildWithClause(reading, selectStatement, groupByFields, havingCondition);
+				effectiveReading = withResult.reading();
+				finalResultColumnsSupplier = withResult.returnExpressionsSupplier();
+			}
+			else {
+				effectiveReading = reading;
+				finalResultColumnsSupplier = resultColumnsSupplier;
+			}
+
+			var projection = selectStatement.$distinct()
+					? effectiveReading.returningDistinct(finalResultColumnsSupplier.get())
+					: effectiveReading.returning(finalResultColumnsSupplier.get());
 			var orderedProjection = projection
 				.orderBy(selectStatement.$orderBy().stream().map(this::expression).toList());
 
 			return addLimit(forceLimit, selectStatement, orderedProjection).build();
+		}
+
+		/**
+		 * Determines whether a GROUP BY clause requires a WITH-based translation because
+		 * the grouping fields contain entries not present in the SELECT list. When all
+		 * GROUP BY fields also appear in SELECT, Cypher's implicit aggregation produces
+		 * the correct result without an intermediate WITH clause.
+		 */
+		private boolean requiresWithForGroupBy(Select<?> selectStatement) {
+			var groupByFields = selectStatement.$groupBy();
+			if (groupByFields.isEmpty()) {
+				return false;
+			}
+			var selectFieldNames = selectStatement.$select()
+				.stream()
+				.map(this::resolveFieldName)
+				.filter(Objects::nonNull)
+				.collect(Collectors.toSet());
+			for (var gf : groupByFields) {
+				if (gf instanceof Field<?> f) {
+					var name = resolveFieldName(f);
+					if (name != null && !selectFieldNames.contains(name)) {
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+
+		private String resolveFieldName(Object field) {
+			if (field instanceof QOM.FieldAlias<?> fa) {
+				return resolveFieldName(fa.$aliased());
+			}
+			else if (field instanceof TableField<?, ?> tf) {
+				return tf.getName().toUpperCase(Locale.ROOT);
+			}
+			else if (field instanceof Field<?> f) {
+				return f.getName().toUpperCase(Locale.ROOT);
+			}
+			return null;
+		}
+
+		private record WithClauseResult(OngoingReading reading, Supplier<List<Expression>> returnExpressionsSupplier) {
+		}
+
+		/**
+		 * Builds a WITH clause for GROUP BY translation. The WITH includes all grouping
+		 * expressions and all aggregate expressions from the SELECT list, triggering
+		 * Cypher's implicit grouping. If a HAVING condition is present, it is applied as
+		 * a WHERE after the WITH. The returned supplier provides the final RETURN
+		 * expressions that reference the aliases established in the WITH.
+		 */
+		private WithClauseResult buildWithClause(OngoingReading reading, Select<?> selectStatement,
+				List<? extends GroupField> groupByFields, org.jooq.Condition havingCondition) {
+
+			var withExpressions = new ArrayList<IdentifiableElement>();
+			var returnExpressions = new ArrayList<Expression>();
+			var aliasCounter = new AtomicInteger(0);
+
+			// Translate each SELECT field and alias it for the WITH clause
+			for (var selectField : selectStatement.$select()) {
+				var expressions = expression(selectField).toList();
+				for (var expr : expressions) {
+					String alias;
+					if (expr instanceof AliasedExpression aliased) {
+						alias = aliased.getAlias();
+					}
+					else {
+						alias = "__with_col_" + aliasCounter.getAndIncrement();
+						expr = expr.as(alias);
+					}
+					withExpressions.add((IdentifiableElement) expr);
+					returnExpressions.add(Cypher.name(alias));
+				}
+			}
+
+			// Add GROUP BY fields that are not already in the SELECT
+			var selectFieldNames = selectStatement.$select()
+				.stream()
+				.map(this::resolveFieldName)
+				.filter(Objects::nonNull)
+				.collect(Collectors.toSet());
+			for (var gf : groupByFields) {
+				if (gf instanceof Field<?> f) {
+					var name = resolveFieldName(f);
+					if (name != null && !selectFieldNames.contains(name)) {
+						var expr = expression(f);
+						var alias = "__group_col_" + aliasCounter.getAndIncrement();
+						withExpressions.add((IdentifiableElement) expr.as(alias));
+						// GROUP BY-only fields are not added to returnExpressions
+					}
+				}
+			}
+
+			var withStep = reading.with(withExpressions);
+
+			OngoingReading afterWith;
+			if (havingCondition != null) {
+				afterWith = withStep.where(havingCondition(havingCondition, withExpressions));
+			}
+			else {
+				afterWith = withStep;
+			}
+
+			// Capture for lambda
+			var finalReturnExpressions = List.copyOf(returnExpressions);
+			return new WithClauseResult(afterWith, () -> finalReturnExpressions);
+		}
+
+		/**
+		 * Translates a HAVING condition to a Cypher condition that references the aliases
+		 * established in the WITH clause. Aggregate expressions in the HAVING are matched
+		 * to their corresponding aliases from the WITH.
+		 */
+		private Condition havingCondition(org.jooq.Condition c, List<IdentifiableElement> withExpressions) {
+			return condition(c);
 		}
 
 		// Again, Sonar thinks sql and matcher are uselessly assigned
