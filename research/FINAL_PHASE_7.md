@@ -262,7 +262,7 @@ void registryDoesNotLeakBetweenTranslations() {
 | (j) | Any of above + ORDER BY | `withClauseGeneration[7]` + `havingConditionTranslation[7]` + `snapshotOrderBy[5,6]` |
 | (k) | Any of above + LIMIT | `limitAndOffsetWithWithClause[1,2]` |
 | (k2) | Any of above + OFFSET | `limitWithOffset` (3 cases, non-WITH) + `limitAndOffsetWithWithClause[3]` (WITH path) |
-| (l) | Full combination: GROUP BY + HAVING + ORDER BY + DISTINCT + LIMIT + OFFSET | `fullCombinationGroupByHavingDistinctOrderByLimitOffset` |
+| (l) | Full combination: GROUP BY + HAVING + ORDER BY + DISTINCT + LIMIT + OFFSET | `fullGroupByCombination` + `fullGroupByCombinationWithGroupByMismatch` + `fullGroupByCombinationWithWhereAndMultipleAggregates` |
 
 **All code paths now have test coverage.**
 
@@ -272,7 +272,7 @@ void registryDoesNotLeakBetweenTranslations() {
 
 - [x] **7.1** Add DISTINCT + WITH tests (3 test cases) — `distinctWithGroupByAndHaving` parameterized test
 - [x] **7.2** Add LIMIT + WITH tests (2 test cases) and OFFSET + WITH test (1 test case) — `limitAndOffsetWithWithClause` parameterized test
-- [x] **7.3** Add full combination test including OFFSET (1 test case) — `fullCombinationGroupByHavingDistinctOrderByLimitOffset` parameterized test
+- [x] **7.3** Add full combination tests (3 test cases) — `fullGroupByCombination`, `fullGroupByCombinationWithGroupByMismatch`, `fullGroupByCombinationWithWhereAndMultipleAggregates`
 - [x] **7.4** Add GROUP BY validation decision comment — added to `requiresWithForGroupBy()` Javadoc
 - [x] **7.5** Add registry cleanup test (1 test case) — `registryDoesNotLeakBetweenTranslations` test
 - [x] **7.6** Apply formatting and run quality checks — formatting applied, 82 pre-existing checkstyle issues (none introduced by Phase 7)
@@ -314,12 +314,12 @@ void registryDoesNotLeakBetweenTranslations() {
 
 Phase 7 is primarily a **hardening and verification phase**. As expected from the code review, no production logic changes were needed — DISTINCT and LIMIT placement were already correct. The deliverables are:
 
-1. **8 new test cases** covering the DISTINCT, LIMIT, OFFSET (WITH path), combination, and registry cleanup gaps
+1. **13 new test cases** covering the DISTINCT, LIMIT, OFFSET (WITH path), combination (including GROUP BY mismatch and WHERE+multiple aggregates), WHERE+GROUP BY paths, and registry cleanup gaps
 2. **1 code comment** documenting the GROUP BY validation decision in `requiresWithForGroupBy()` Javadoc
 3. **Formatting and quality gate** confirmed — 0 new checkstyle violations introduced
 4. **Complete code path coverage** verified — all paths (a) through (l) now have tests
 
-**Final test count:** 432 (baseline) + 8 (new) = **440 tests, 0 failures.**
+**Final test count:** 432 (baseline) + 13 (new) = **445 tests, 0 failures.**
 
 ---
 

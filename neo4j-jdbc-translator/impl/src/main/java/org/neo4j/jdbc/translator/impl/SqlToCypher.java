@@ -541,6 +541,8 @@ final class SqlToCypher implements Translator {
 		 * grouping will group by all non-aggregated columns in the RETURN, which may
 		 * differ from the SQL GROUP BY. This matches MySQL's permissive mode behavior.
 		 * Validation/rejection was considered and deferred.
+		 * @param selectStatement the SELECT statement to inspect
+		 * @return true if a WITH clause is needed for correct GROUP BY translation
 		 */
 		private boolean requiresWithForGroupBy(Select<?> selectStatement) {
 			var groupByFields = selectStatement.$groupBy();
@@ -571,6 +573,12 @@ final class SqlToCypher implements Translator {
 		 * Cypher's implicit grouping. If a HAVING condition is present, it is applied as
 		 * a WHERE after the WITH. The returned supplier provides the final RETURN
 		 * expressions that reference the aliases established in the WITH.
+		 * @param reading the current reading step to attach the WITH to
+		 * @param selectStatement the SELECT statement being translated
+		 * @param groupByFields the GROUP BY fields from the SQL statement
+		 * @param havingCondition the HAVING condition, or null if absent
+		 * @return the WITH clause result containing the reading step and return
+		 * expressions
 		 */
 		private WithClauseResult buildWithClause(OngoingReading reading, Select<?> selectStatement,
 				List<? extends GroupField> groupByFields, org.jooq.Condition havingCondition) {
@@ -652,6 +660,8 @@ final class SqlToCypher implements Translator {
 		 * established in the WITH clause. Aggregate expressions and column references in
 		 * the HAVING are resolved to their WITH aliases by the unified interception in
 		 * {@code expression(Field<?>)} via the active {@code aliasRegistry}.
+		 * @param c the jOOQ HAVING condition to translate
+		 * @return the equivalent Cypher condition referencing WITH aliases
 		 */
 		private Condition havingCondition(org.jooq.Condition c) {
 			return condition(c);

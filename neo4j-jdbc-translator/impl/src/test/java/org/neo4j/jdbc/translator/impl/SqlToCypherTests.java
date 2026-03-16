@@ -1036,7 +1036,8 @@ class SqlToCypherTests {
 		assertThat(translator.translate(sql)).isEqualTo(cypher);
 	}
 
-	// Phase 7: DISTINCT + WITH path tests (7.1)
+	// DISTINCT applies to the final RETURN, not the WITH, across all GROUP BY/HAVING
+	// paths.
 	@ParameterizedTest
 	@CsvSource(delimiterString = "|",
 			textBlock = """
@@ -1050,7 +1051,7 @@ class SqlToCypherTests {
 		assertThat(translator.translate(sql)).isEqualTo(cypher);
 	}
 
-	// Phase 7: LIMIT and OFFSET + WITH path tests (7.2)
+	// LIMIT and OFFSET attach to the final RETURN when a WITH clause is present.
 	@ParameterizedTest
 	@CsvSource(delimiterString = "|",
 			textBlock = """
@@ -1064,50 +1065,66 @@ class SqlToCypherTests {
 		assertThat(translator.translate(sql)).isEqualTo(cypher);
 	}
 
-	// Phase 7: Full combination test (7.3)
+	// All clauses combined: GROUP BY + HAVING + DISTINCT + ORDER BY + LIMIT + OFFSET.
+	@Test
+	void fullGroupByCombination() {
+
+		var translator = SqlToCypher.defaultTranslator();
+		assertThat(translator.translate(
+				"SELECT DISTINCT name FROM People p GROUP BY name HAVING count(*) > 5 ORDER BY name LIMIT 10 OFFSET 5"))
+			.isEqualTo(
+					"MATCH (p:People) WITH p.name AS name, count(*) AS __having_col_0 WHERE __having_col_0 > 5 RETURN DISTINCT name ORDER BY name SKIP 5 LIMIT 10");
+	}
+
+	// GROUP BY-only column (department) with HAVING, DISTINCT, ORDER BY, and LIMIT.
+	@Test
+	void fullGroupByCombinationWithGroupByMismatch() {
+
+		var translator = SqlToCypher.defaultTranslator();
+		assertThat(translator.translate(
+				"SELECT DISTINCT name, sum(age) FROM People p GROUP BY name, department HAVING sum(age) > 100 ORDER BY name LIMIT 5"))
+			.isEqualTo(
+					"MATCH (p:People) WITH p.name AS name, sum(p.age) AS __with_col_0, p.department AS __group_col_1 WHERE __with_col_0 > 100 RETURN DISTINCT name, __with_col_0 ORDER BY name LIMIT 5");
+	}
+
+	// WHERE + multiple aggregates in HAVING, all clauses combined.
+	@Test
+	void fullGroupByCombinationWithWhereAndMultipleAggregates() {
+
+		var translator = SqlToCypher.defaultTranslator();
+		assertThat(translator.translate(
+				"SELECT DISTINCT department, count(*) AS cnt, max(age) AS max_age FROM People p WHERE age > 18 GROUP BY department HAVING count(*) > 1 AND max(age) > 25 ORDER BY cnt DESC LIMIT 10 OFFSET 2"))
+			.isEqualTo(
+					"MATCH (p:People) WHERE p.age > 18 WITH p.department AS department, count(*) AS cnt, max(p.age) AS max_age WHERE (cnt > 1 AND max_age > 25) RETURN DISTINCT department, cnt, max_age ORDER BY cnt DESC SKIP 2 LIMIT 10");
+	}
+
+	// WHERE combined with GROUP BY and ORDER BY on aggregate alias.
 	@ParameterizedTest
 	@CsvSource(delimiterString = "|",
 			textBlock = """
-					SELECT DISTINCT name FROM People p GROUP BY name HAVING count(*) > 5 ORDER BY name LIMIT 10 OFFSET 5|MATCH (p:People) WITH p.name AS name, count(*) AS __having_col_0 WHERE __having_col_0 > 5 RETURN DISTINCT name ORDER BY name SKIP 5 LIMIT 10
+					SELECT department, count(*) AS cnt FROM People p WHERE age > 18 GROUP BY department|MATCH (p:People) WHERE p.age > 18 RETURN p.department AS department, count(*) AS cnt
+					SELECT count(*) AS cnt FROM People p WHERE age > 18 GROUP BY department|MATCH (p:People) WHERE p.age > 18 WITH count(*) AS cnt, p.department AS __group_col_0 RETURN cnt
+					SELECT count(*) AS cnt FROM People p ORDER BY cnt|MATCH (p:People) RETURN count(*) AS cnt ORDER BY cnt
 					""")
-	void fullCombinationGroupByHavingDistinctOrderByLimitOffset(String sql, String cypher) {
+	void whereWithGroupByAndOrderByPaths(String sql, String cypher) {
 
 		var translator = SqlToCypher.defaultTranslator();
 		assertThat(translator.translate(sql)).isEqualTo(cypher);
 	}
 
-	// Phase 7: Discover expected Cypher for new tests (temporary)
-	@Test
-	void discoverExpectedCypher() {
-		var translator = SqlToCypher.defaultTranslator();
-		// Kitchen sink with WHERE + multiple aggregates
-		System.out.println("KS2: " + translator.translate(
-			"SELECT DISTINCT department, count(*) AS cnt, max(age) AS max_age " +
-			"FROM People p WHERE age > 18 GROUP BY department " +
-			"HAVING count(*) > 1 AND max(age) > 25 ORDER BY cnt DESC LIMIT 10 OFFSET 2"));
-		// WHERE + GROUP BY simple path
-		System.out.println("WG1: " + translator.translate(
-			"SELECT department, count(*) AS cnt FROM People p WHERE age > 18 GROUP BY department"));
-		// WHERE + GROUP BY WITH path
-		System.out.println("WG2: " + translator.translate(
-			"SELECT count(*) AS cnt FROM People p WHERE age > 18 GROUP BY department"));
-		// ORDER BY aggregate alias no GROUP BY
-		System.out.println("OA1: " + translator.translate(
-			"SELECT count(*) AS cnt FROM People p ORDER BY cnt"));
-	}
-
-	// Phase 7: Registry cleanup test (7.5)
 	@Test
 	void registryDoesNotLeakBetweenTranslations() {
 
 		var translator = SqlToCypher.defaultTranslator();
 		// First: query with HAVING (activates registry)
-		translator.translate("SELECT name FROM People p GROUP BY name HAVING count(*) > 5");
+		var havingResult = translator.translate("SELECT name FROM People p GROUP BY name HAVING count(*) > 5");
+		assertThat(havingResult).contains("WITH").contains("__having_col_0");
 		// Second: simple query (should NOT have WITH or alias references)
 		var result = translator.translate("SELECT name FROM People p");
 		assertThat(result).doesNotContainPattern("\\bWITH\\b");
 		assertThat(result).doesNotContain("__with_col_");
 		assertThat(result).doesNotContain("__having_col_");
+		assertThat(result).isEqualTo("MATCH (p:People) RETURN p.name AS name");
 	}
 
 	private record SqlAndCypher(String name, String sql, String cypher) {

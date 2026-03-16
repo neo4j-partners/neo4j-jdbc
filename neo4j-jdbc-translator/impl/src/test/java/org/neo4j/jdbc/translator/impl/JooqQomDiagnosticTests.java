@@ -18,7 +18,6 @@
  */
 package org.neo4j.jdbc.translator.impl;
 
-import org.jooq.Asterisk;
 import org.jooq.Field;
 import org.jooq.TableField;
 import org.jooq.impl.QOM;

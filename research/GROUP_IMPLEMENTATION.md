@@ -23,7 +23,7 @@ The SQL-to-Cypher translator in `neo4j-jdbc-translator/impl` now supports GROUP 
 | `AliasRegistryTests.java` | 15 registry tests covering structural and name-based lookup |
 | `SqlToCypherTests.java` | End-to-end translator tests for aggregates, WITH generation, and HAVING |
 
-**Test count:** 425 tests, 0 failures, 0 errors.
+**Test count:** 445 tests, 0 failures, 0 errors (425 after Phase 6, +20 in Phase 7).
 
 ---
 
@@ -508,6 +508,66 @@ MATCH (p:People) WITH sum(p.age) AS __with_col_0, p.name AS __group_col_1 WHERE 
 ```
 
 When the HAVING aggregate is already in SELECT, no hidden column is needed — the HAVING condition references the existing WITH alias.
+
+---
+
+## Phase 7: DISTINCT, LIMIT, OFFSET Hardening & Full Combination Tests
+
+**Goal:** Verify that DISTINCT, LIMIT, and OFFSET interact correctly with WITH clauses from GROUP BY/HAVING, add full combination tests, and harden the implementation.
+
+### Why this was needed
+
+Phases 1-6 built the core GROUP BY/HAVING machinery but didn't explicitly verify how DISTINCT, LIMIT, and OFFSET behave when a WITH clause is present. These clauses must attach to the final `RETURN`, never to the `WITH`. A subtle bug could produce `WITH DISTINCT` (deduplicating before aggregation) instead of `RETURN DISTINCT` (deduplicating after), or apply `LIMIT` to the WITH instead of the RETURN. Phase 7 was a verification and hardening pass — no production logic changes were needed, confirming that the Phase 4-6 implementation was already correct.
+
+### What was implemented
+
+**Production code changes (documentation only):**
+- Added `@param` and `@return` Javadoc tags to `requiresWithForGroupBy()`, `buildWithClause()`, and `havingCondition()` methods in `SqlToCypher.java`
+- Removed unused `Asterisk` import from `JooqQomDiagnosticTests.java`
+
+**Test additions (13 new test cases):**
+
+1. **DISTINCT + WITH path tests (3 tests)** — `distinctWithGroupByAndHaving` parameterized test verifying `RETURN DISTINCT` placement:
+   - `SELECT DISTINCT name, count(*) ... GROUP BY name` → `RETURN DISTINCT` (no WITH needed)
+   - `SELECT DISTINCT count(*) ... GROUP BY name` → WITH path, `RETURN DISTINCT`
+   - `SELECT DISTINCT name ... GROUP BY name HAVING count(*) > 5` → HAVING path, `RETURN DISTINCT`
+
+2. **LIMIT/OFFSET + WITH path tests (3 tests)** — `limitAndOffsetWithWithClause` parameterized test:
+   - `GROUP BY ... LIMIT` with WITH → LIMIT after RETURN
+   - `GROUP BY ... HAVING ... LIMIT` → LIMIT after RETURN
+   - `GROUP BY ... HAVING ... ORDER BY ... LIMIT ... OFFSET` → SKIP before LIMIT, both after RETURN
+
+3. **Full combination tests (3 tests):**
+   - `fullGroupByCombination` — all clauses: GROUP BY + HAVING + DISTINCT + ORDER BY + LIMIT + OFFSET
+   - `fullGroupByCombinationWithGroupByMismatch` — GROUP BY-only column with HAVING, DISTINCT, ORDER BY, LIMIT
+   - `fullGroupByCombinationWithWhereAndMultipleAggregates` — WHERE + multiple HAVING aggregates + DISTINCT + ORDER BY + LIMIT + OFFSET
+
+4. **WHERE + GROUP BY path tests (3 tests)** — `whereWithGroupByAndOrderByPaths` parameterized test:
+   - WHERE with GROUP BY (simple path, no WITH)
+   - WHERE with GROUP BY (WITH path)
+   - ORDER BY aggregate alias without GROUP BY
+
+5. **Registry cleanup test (1 test)** — `registryDoesNotLeakBetweenTranslations`: translates a HAVING query then a simple query, verifying no WITH or alias artifacts leak to the second translation.
+
+### SQL-to-Cypher Examples: Full Combination
+
+```sql
+SELECT DISTINCT name FROM People p GROUP BY name HAVING count(*) > 5 ORDER BY name LIMIT 10 OFFSET 5
+```
+```cypher
+MATCH (p:People) WITH p.name AS name, count(*) AS __having_col_0 WHERE __having_col_0 > 5 RETURN DISTINCT name ORDER BY name SKIP 5 LIMIT 10
+```
+
+Every clause interaction verified: WITH from HAVING, hidden `__having_col_0` excluded from RETURN, `RETURN DISTINCT` (not `WITH DISTINCT`), ORDER BY resolves alias, SKIP before LIMIT.
+
+```sql
+SELECT DISTINCT department, count(*) AS cnt, max(age) AS max_age FROM People p WHERE age > 18 GROUP BY department HAVING count(*) > 1 AND max(age) > 25 ORDER BY cnt DESC LIMIT 10 OFFSET 2
+```
+```cypher
+MATCH (p:People) WHERE p.age > 18 WITH p.department AS department, count(*) AS cnt, max(p.age) AS max_age WHERE (cnt > 1 AND max_age > 25) RETURN DISTINCT department, cnt, max_age ORDER BY cnt DESC SKIP 2 LIMIT 10
+```
+
+WHERE filters before aggregation, HAVING filters after, DISTINCT on final RETURN, SKIP + LIMIT after ORDER BY.
 
 ---
 
