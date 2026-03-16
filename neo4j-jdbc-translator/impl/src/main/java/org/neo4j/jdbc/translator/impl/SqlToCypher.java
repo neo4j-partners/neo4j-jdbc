@@ -533,6 +533,14 @@ final class SqlToCypher implements Translator {
 		 * the grouping fields contain entries not present in the SELECT list. When all
 		 * GROUP BY fields also appear in SELECT, Cypher's implicit aggregation produces
 		 * the correct result without an intermediate WITH clause.
+		 *
+		 * <p>
+		 * Design decision: this method does not validate that every non-aggregated SELECT
+		 * expression appears in the GROUP BY list. Queries where non-aggregated SELECT
+		 * columns are missing from GROUP BY are silently translated. Cypher's implicit
+		 * grouping will group by all non-aggregated columns in the RETURN, which may
+		 * differ from the SQL GROUP BY. This matches MySQL's permissive mode behavior.
+		 * Validation/rejection was considered and deferred.
 		 */
 		private boolean requiresWithForGroupBy(Select<?> selectStatement) {
 			var groupByFields = selectStatement.$groupBy();

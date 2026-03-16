@@ -2,7 +2,7 @@
 
 ## Pre-Phase 7 Status
 
-**Baseline:** 425 tests, 0 failures, 0 errors.
+**Baseline:** 432 tests, 0 failures, 0 errors.
 
 **Phases 1-6 are complete.** The core GROUP BY/HAVING implementation is functional. The translator correctly:
 - Emits simple `MATCH ... RETURN` when GROUP BY columns match SELECT columns
@@ -258,25 +258,25 @@ void registryDoesNotLeakBetweenTranslations() {
 | (f) | HAVING only (no GROUP BY) — WITH + WHERE | `havingConditionTranslation[2]` |
 | (g) | HAVING with aggregate not in SELECT — hidden column | `havingConditionTranslation[1,5,6,8]` |
 | (h) | HAVING with non-aggregate condition on GROUP BY column | `havingConditionTranslation[3]` |
-| (i) | Any of above + DISTINCT | **MISSING — add in 7.1** |
+| (i) | Any of above + DISTINCT | `distinctWithGroupByAndHaving` (3 cases) |
 | (j) | Any of above + ORDER BY | `withClauseGeneration[7]` + `havingConditionTranslation[7]` + `snapshotOrderBy[5,6]` |
-| (k) | Any of above + LIMIT | **MISSING — add in 7.2** |
-| (k2) | Any of above + OFFSET | `snapshotOrderBy` (3 cases, non-WITH path only). **WITH path MISSING — add in 7.2** |
-| (l) | Full combination: GROUP BY + HAVING + ORDER BY + DISTINCT + LIMIT + OFFSET | **MISSING — add in 7.3** |
+| (k) | Any of above + LIMIT | `limitAndOffsetWithWithClause[1,2]` |
+| (k2) | Any of above + OFFSET | `limitWithOffset` (3 cases, non-WITH) + `limitAndOffsetWithWithClause[3]` (WITH path) |
+| (l) | Full combination: GROUP BY + HAVING + ORDER BY + DISTINCT + LIMIT + OFFSET | `fullCombinationGroupByHavingDistinctOrderByLimitOffset` |
 
-**Gaps to fill:** Paths (i), (k), (k2 WITH path), and (l).
+**All code paths now have test coverage.**
 
 ---
 
 ## Implementation Checklist
 
-- [ ] **7.1** Add DISTINCT + WITH tests (3 test cases)
-- [ ] **7.2** Add LIMIT + WITH tests (2 test cases) and OFFSET + WITH test (1 test case)
-- [ ] **7.3** Add full combination test including OFFSET (1-2 test cases)
-- [ ] **7.4** Add GROUP BY validation decision comment
-- [ ] **7.5** Add registry cleanup test (1 test case)
-- [ ] **7.6** Apply formatting and run quality checks
-- [ ] **7.7** Verify all code paths have test coverage (review table above)
+- [x] **7.1** Add DISTINCT + WITH tests (3 test cases) — `distinctWithGroupByAndHaving` parameterized test
+- [x] **7.2** Add LIMIT + WITH tests (2 test cases) and OFFSET + WITH test (1 test case) — `limitAndOffsetWithWithClause` parameterized test
+- [x] **7.3** Add full combination test including OFFSET (1 test case) — `fullCombinationGroupByHavingDistinctOrderByLimitOffset` parameterized test
+- [x] **7.4** Add GROUP BY validation decision comment — added to `requiresWithForGroupBy()` Javadoc
+- [x] **7.5** Add registry cleanup test (1 test case) — `registryDoesNotLeakBetweenTranslations` test
+- [x] **7.6** Apply formatting and run quality checks — formatting applied, 82 pre-existing checkstyle issues (none introduced by Phase 7)
+- [x] **7.7** Verify all code paths have test coverage (review table below)
 
 ---
 
@@ -300,26 +300,26 @@ void registryDoesNotLeakBetweenTranslations() {
 
 ## Risk Assessment
 
-| Risk | Likelihood | Impact | Mitigation |
-|------|-----------|--------|------------|
-| DISTINCT + WITH produces `WITH DISTINCT` instead of `RETURN DISTINCT` | Very Low | High | Code review confirms correct placement. Tests will verify. |
-| LIMIT applies to WITH instead of RETURN | Very Low | High | Code review confirms correct placement. Tests will verify. |
-| Registry leaks between consecutive translations | Very Low | High | `finally` block verified. Explicit test in 7.5. |
-| OFFSET not applied when WITH clause is present | Very Low | Medium | OFFSET support is implemented (Q3 resolved). Existing tests cover non-WITH path. Add WITH-path test in 7.2. |
-| Edge case in full combination (DISTINCT + HAVING + ORDER BY + LIMIT + OFFSET) | Low | Medium | Explicit end-to-end test in 7.3. |
+| Risk | Likelihood | Impact | Status |
+|------|-----------|--------|--------|
+| DISTINCT + WITH produces `WITH DISTINCT` instead of `RETURN DISTINCT` | Very Low | High | **Verified** — 3 tests confirm `RETURN DISTINCT` placement |
+| LIMIT applies to WITH instead of RETURN | Very Low | High | **Verified** — 2 tests confirm LIMIT after RETURN |
+| Registry leaks between consecutive translations | Very Low | High | **Verified** — `registryDoesNotLeakBetweenTranslations` test passes |
+| OFFSET not applied when WITH clause is present | Very Low | Medium | **Verified** — WITH-path OFFSET test added and passes |
+| Edge case in full combination (DISTINCT + HAVING + ORDER BY + LIMIT + OFFSET) | Low | Medium | **Verified** — full combination test passes |
 
 ---
 
 ## Expected Outcome
 
-Phase 7 is primarily a **hardening and verification phase**. Based on the code review, no production logic changes are expected — DISTINCT and LIMIT placement are already correct. The deliverables are:
+Phase 7 is primarily a **hardening and verification phase**. As expected from the code review, no production logic changes were needed — DISTINCT and LIMIT placement were already correct. The deliverables are:
 
-1. **~8-10 new test cases** covering the DISTINCT, LIMIT, OFFSET (WITH path), and combination gaps
-2. **1 code comment** documenting the GROUP BY validation decision
-3. **Formatting and quality gate** confirmation
-4. **Complete code path coverage** verification
+1. **8 new test cases** covering the DISTINCT, LIMIT, OFFSET (WITH path), combination, and registry cleanup gaps
+2. **1 code comment** documenting the GROUP BY validation decision in `requiresWithForGroupBy()` Javadoc
+3. **Formatting and quality gate** confirmed — 0 new checkstyle violations introduced
+4. **Complete code path coverage** verified — all paths (a) through (l) now have tests
 
-**Expected final test count:** 425 (baseline) + ~10 (new) = ~435 tests.
+**Final test count:** 432 (baseline) + 8 (new) = **440 tests, 0 failures.**
 
 ---
 

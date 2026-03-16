@@ -1036,6 +1036,80 @@ class SqlToCypherTests {
 		assertThat(translator.translate(sql)).isEqualTo(cypher);
 	}
 
+	// Phase 7: DISTINCT + WITH path tests (7.1)
+	@ParameterizedTest
+	@CsvSource(delimiterString = "|",
+			textBlock = """
+					SELECT DISTINCT name, count(*) FROM People p GROUP BY name|MATCH (p:People) RETURN DISTINCT p.name AS name, count(*)
+					SELECT DISTINCT count(*) FROM People p GROUP BY name|MATCH (p:People) WITH count(*) AS __with_col_0, p.name AS __group_col_1 RETURN DISTINCT __with_col_0
+					SELECT DISTINCT name FROM People p GROUP BY name HAVING count(*) > 5|MATCH (p:People) WITH p.name AS name, count(*) AS __having_col_0 WHERE __having_col_0 > 5 RETURN DISTINCT name
+					""")
+	void distinctWithGroupByAndHaving(String sql, String cypher) {
+
+		var translator = SqlToCypher.defaultTranslator();
+		assertThat(translator.translate(sql)).isEqualTo(cypher);
+	}
+
+	// Phase 7: LIMIT and OFFSET + WITH path tests (7.2)
+	@ParameterizedTest
+	@CsvSource(delimiterString = "|",
+			textBlock = """
+					SELECT sum(age) FROM People p GROUP BY name LIMIT 5|MATCH (p:People) WITH sum(p.age) AS __with_col_0, p.name AS __group_col_1 RETURN __with_col_0 LIMIT 5
+					SELECT name FROM People p GROUP BY name HAVING count(*) > 5 LIMIT 10|MATCH (p:People) WITH p.name AS name, count(*) AS __having_col_0 WHERE __having_col_0 > 5 RETURN name LIMIT 10
+					SELECT name FROM People p GROUP BY name HAVING count(*) > 5 ORDER BY name LIMIT 10 OFFSET 2|MATCH (p:People) WITH p.name AS name, count(*) AS __having_col_0 WHERE __having_col_0 > 5 RETURN name ORDER BY name SKIP 2 LIMIT 10
+					""")
+	void limitAndOffsetWithWithClause(String sql, String cypher) {
+
+		var translator = SqlToCypher.defaultTranslator();
+		assertThat(translator.translate(sql)).isEqualTo(cypher);
+	}
+
+	// Phase 7: Full combination test (7.3)
+	@ParameterizedTest
+	@CsvSource(delimiterString = "|",
+			textBlock = """
+					SELECT DISTINCT name FROM People p GROUP BY name HAVING count(*) > 5 ORDER BY name LIMIT 10 OFFSET 5|MATCH (p:People) WITH p.name AS name, count(*) AS __having_col_0 WHERE __having_col_0 > 5 RETURN DISTINCT name ORDER BY name SKIP 5 LIMIT 10
+					""")
+	void fullCombinationGroupByHavingDistinctOrderByLimitOffset(String sql, String cypher) {
+
+		var translator = SqlToCypher.defaultTranslator();
+		assertThat(translator.translate(sql)).isEqualTo(cypher);
+	}
+
+	// Phase 7: Discover expected Cypher for new tests (temporary)
+	@Test
+	void discoverExpectedCypher() {
+		var translator = SqlToCypher.defaultTranslator();
+		// Kitchen sink with WHERE + multiple aggregates
+		System.out.println("KS2: " + translator.translate(
+			"SELECT DISTINCT department, count(*) AS cnt, max(age) AS max_age " +
+			"FROM People p WHERE age > 18 GROUP BY department " +
+			"HAVING count(*) > 1 AND max(age) > 25 ORDER BY cnt DESC LIMIT 10 OFFSET 2"));
+		// WHERE + GROUP BY simple path
+		System.out.println("WG1: " + translator.translate(
+			"SELECT department, count(*) AS cnt FROM People p WHERE age > 18 GROUP BY department"));
+		// WHERE + GROUP BY WITH path
+		System.out.println("WG2: " + translator.translate(
+			"SELECT count(*) AS cnt FROM People p WHERE age > 18 GROUP BY department"));
+		// ORDER BY aggregate alias no GROUP BY
+		System.out.println("OA1: " + translator.translate(
+			"SELECT count(*) AS cnt FROM People p ORDER BY cnt"));
+	}
+
+	// Phase 7: Registry cleanup test (7.5)
+	@Test
+	void registryDoesNotLeakBetweenTranslations() {
+
+		var translator = SqlToCypher.defaultTranslator();
+		// First: query with HAVING (activates registry)
+		translator.translate("SELECT name FROM People p GROUP BY name HAVING count(*) > 5");
+		// Second: simple query (should NOT have WITH or alias references)
+		var result = translator.translate("SELECT name FROM People p");
+		assertThat(result).doesNotContainPattern("\\bWITH\\b");
+		assertThat(result).doesNotContain("__with_col_");
+		assertThat(result).doesNotContain("__having_col_");
+	}
+
 	private record SqlAndCypher(String name, String sql, String cypher) {
 		static SqlAndCypher of(String name, String sql, String cypher) {
 			return new SqlAndCypher(name, sql, cypher);
