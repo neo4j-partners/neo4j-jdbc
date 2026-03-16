@@ -12,8 +12,8 @@
 | Part 1: Infrastructure research | COMPLETE | Findings documented below |
 | Part 2: Test plan | COMPLETE | 56 tests across 11 categories |
 | GroupByIT.java written | COMPLETE | 56 @Test methods, compiles cleanly, formatting applied, code reviewed |
-| Integration test run | **PENDING — USER** | Run: `./test.sh --step 3 --output phase8_non_having` or `./mvnw -DskipUTs -Dcheckstyle.skip=true -Dlicense.skip=true -pl neo4j-jdbc-it/neo4j-jdbc-it-cp verify` |
-| Assertion tuning | NOT STARTED | Adjust expected values based on actual output |
+| Integration test run | COMPLETE | 56/56 tests pass. 3 translator bugs found and fixed (ORDER BY alias, OFFSET, column labels) |
+| Assertion tuning | COMPLETE | Fixed 3 plan deviations (avg in multi-aggregate, all-five naming, ORDER BY average DESC) + added `AS released` aliases for JDBC column label compliance |
 | HAVING tests | DEFERRED | ~23 additional tests after HAVING hidden-column support |
 
 **Test file**: `neo4j-jdbc-it/neo4j-jdbc-it-cp/src/test/java/org/neo4j/jdbc/it/cp/GroupByIT.java`

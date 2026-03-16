@@ -310,8 +310,8 @@ class GroupByIT extends IntegrationTestBase {
 		void moviesGroupByReleased() throws SQLException {
 			try (var connection = getConnection(true, false);
 					var stmt = connection.createStatement();
-					var rs = stmt
-						.executeQuery("SELECT m.released, count(*) AS movie_count FROM Movie m GROUP BY m.released")) {
+					var rs = stmt.executeQuery(
+							"SELECT m.released AS released, count(*) AS movie_count FROM Movie m GROUP BY m.released")) {
 				var rows = new ArrayList<List<Object>>();
 				while (rs.next()) {
 					rows.add(List.of(rs.getLong("released"), rs.getLong("movie_count")));
@@ -327,7 +327,7 @@ class GroupByIT extends IntegrationTestBase {
 			try (var connection = getConnection(true, false);
 					var stmt = connection.createStatement();
 					var rs = stmt.executeQuery(
-							"SELECT m.released, count(*) AS movie_count FROM Movie m GROUP BY m.released ORDER BY m.released")) {
+							"SELECT m.released AS released, count(*) AS movie_count FROM Movie m GROUP BY m.released ORDER BY released")) {
 				var years = new ArrayList<Long>();
 				while (rs.next()) {
 					years.add(rs.getLong("released"));
@@ -423,7 +423,7 @@ class GroupByIT extends IntegrationTestBase {
 			try (var connection = getConnection(true, false);
 					var stmt = connection.createStatement();
 					var rs = stmt.executeQuery(
-							"SELECT m.released, count(*) AS cnt FROM Movie m GROUP BY m.released ORDER BY cnt DESC, m.released")) {
+							"SELECT m.released AS released, count(*) AS cnt FROM Movie m GROUP BY m.released ORDER BY cnt DESC, released")) {
 				var prevCount = Long.MAX_VALUE;
 				var prevYear = Long.MIN_VALUE;
 				while (rs.next()) {
@@ -565,7 +565,7 @@ class GroupByIT extends IntegrationTestBase {
 			try (var connection = getConnection(true, false);
 					var stmt = connection.createStatement();
 					var rs = stmt.executeQuery(
-							"SELECT DISTINCT m.released FROM Movie m GROUP BY m.released ORDER BY m.released")) {
+							"SELECT DISTINCT m.released AS released FROM Movie m GROUP BY m.released ORDER BY released")) {
 				var years = new ArrayList<Long>();
 				while (rs.next()) {
 					years.add(rs.getLong("released"));
@@ -627,7 +627,7 @@ class GroupByIT extends IntegrationTestBase {
 			try (var connection = getConnection(true, false);
 					var stmt = connection.createStatement();
 					var rs = stmt.executeQuery(
-							"SELECT m.released, count(*) AS cnt FROM Movie m WHERE m.released >= 2000 GROUP BY m.released ORDER BY m.released")) {
+							"SELECT m.released AS released, count(*) AS cnt FROM Movie m WHERE m.released >= 2000 GROUP BY m.released ORDER BY released")) {
 				var years = new ArrayList<Long>();
 				while (rs.next()) {
 					years.add(rs.getLong("released"));
@@ -857,7 +857,7 @@ class GroupByIT extends IntegrationTestBase {
 			try (var connection = getConnection(true, false);
 					var stmt = connection.createStatement();
 					var rs = stmt.executeQuery(
-							"SELECT m.released, count(*) AS cnt, min(m.title) AS first_title, max(m.title) AS last_title FROM Movie m GROUP BY m.released ORDER BY m.released")) {
+							"SELECT m.released AS released, count(*) AS cnt, min(m.title) AS first_title, max(m.title) AS last_title FROM Movie m GROUP BY m.released ORDER BY released")) {
 				var rowCount = 0;
 				while (rs.next()) {
 					rowCount++;

@@ -503,6 +503,21 @@ final class SqlToCypher implements Translator {
 				var projection = selectStatement.$distinct()
 						? effectiveReading.returningDistinct(finalResultColumnsSupplier.get())
 						: effectiveReading.returning(finalResultColumnsSupplier.get());
+
+				// Set up alias registry for ORDER BY when not already in WITH scope.
+				// This ensures ORDER BY on SELECT aliases (e.g., ORDER BY cnt where
+				// cnt is an aggregate alias) resolves to the Cypher alias name
+				// rather than being treated as a table property (p.cnt).
+				if (this.aliasRegistry == null && !selectStatement.$orderBy().isEmpty()) {
+					var orderByRegistry = new AliasRegistry();
+					for (var sf : selectStatement.$select()) {
+						if (sf instanceof QOM.FieldAlias<?> fa) {
+							orderByRegistry.register(fa, fa.$alias().last());
+						}
+					}
+					this.aliasRegistry = orderByRegistry;
+				}
+
 				var orderedProjection = projection
 					.orderBy(selectStatement.$orderBy().stream().map(this::expression).toList());
 
@@ -638,22 +653,33 @@ final class SqlToCypher implements Translator {
 		@SuppressWarnings("squid:S1854")
 		private StatementBuilder.BuildableStatement<ResultStatement> addLimit(boolean force, Select<?> selectStatement,
 				StatementBuilder.OngoingMatchAndReturnWithOrder projection) {
-			StatementBuilder.BuildableStatement<ResultStatement> buildableStatement;
-			if (!(selectStatement.$limit() instanceof Param<?> param)) {
-				var forceLimit = force;
-				var sql = Optional.ofNullable(selectStatement.$limit()).map(Object::toString).orElse("");
-				var matcher = LIMIT_STAR_FROM_PATTERN.matcher(sql);
-				var limit = 1;
-				if (matcher.matches()) {
-					forceLimit = true;
-					limit = Integer.parseInt(matcher.group(1));
-				}
-				buildableStatement = forceLimit ? projection.limit(limit) : projection;
+
+			// Apply OFFSET (SKIP) first — Cypher requires SKIP before LIMIT.
+			// skip() narrows the type to TerminalExposesLimit, so we branch here:
+			// if offset is present, apply skip first then limit on the result;
+			// otherwise use the original projection which supports both skip and limit.
+			var offset = selectStatement.$offset();
+			if (offset != null) {
+				var afterSkip = projection.skip(expression(offset));
+				return applyLimit(force, selectStatement, afterSkip);
 			}
-			else {
-				buildableStatement = projection.limit(expression(param));
+			return applyLimit(force, selectStatement, projection);
+		}
+
+		private StatementBuilder.BuildableStatement<ResultStatement> applyLimit(boolean force,
+				Select<?> selectStatement, StatementBuilder.TerminalExposesLimit target) {
+			if (selectStatement.$limit() instanceof Param<?> param) {
+				return target.limit(expression(param));
 			}
-			return buildableStatement;
+			var forceLimit = force;
+			var sql = Optional.ofNullable(selectStatement.$limit()).map(Object::toString).orElse("");
+			var matcher = LIMIT_STAR_FROM_PATTERN.matcher(sql);
+			var limit = 1;
+			if (matcher.matches()) {
+				forceLimit = true;
+				limit = Integer.parseInt(matcher.group(1));
+			}
+			return forceLimit ? target.limit(limit) : target;
 		}
 
 		private OngoingReading createOngoingReadingFromViews(Select<?> selectStatement, ArrayList<CbvPointer> cbvs) {

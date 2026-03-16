@@ -1009,6 +1009,33 @@ class SqlToCypherTests {
 		assertThat(translator.translate(sql)).isEqualTo(cypher);
 	}
 
+	@ParameterizedTest
+	@CsvSource(delimiterString = "|",
+			textBlock = """
+					SELECT name, count(*) AS cnt FROM People p GROUP BY name ORDER BY cnt|MATCH (p:People) RETURN p.name AS name, count(*) AS cnt ORDER BY cnt
+					SELECT name, count(*) AS cnt FROM People p GROUP BY name ORDER BY cnt DESC|MATCH (p:People) RETURN p.name AS name, count(*) AS cnt ORDER BY cnt DESC
+					SELECT department, sum(age) AS total FROM People p GROUP BY department ORDER BY total|MATCH (p:People) RETURN p.department AS department, sum(p.age) AS total ORDER BY total
+					SELECT department, count(*) AS cnt, avg(age) AS average FROM People p GROUP BY department ORDER BY cnt DESC, average|MATCH (p:People) RETURN p.department AS department, count(*) AS cnt, avg(p.age) AS average ORDER BY cnt DESC, average
+					""")
+	void orderByAggregateAlias(String sql, String cypher) {
+
+		var translator = SqlToCypher.defaultTranslator();
+		assertThat(translator.translate(sql)).isEqualTo(cypher);
+	}
+
+	@ParameterizedTest
+	@CsvSource(delimiterString = "|",
+			textBlock = """
+					SELECT name, age FROM People p ORDER BY name LIMIT 5 OFFSET 10|MATCH (p:People) RETURN p.name AS name, p.age AS age ORDER BY p.name SKIP 10 LIMIT 5
+					SELECT name FROM People p ORDER BY name LIMIT 3 OFFSET 0|MATCH (p:People) RETURN p.name AS name ORDER BY p.name SKIP 0 LIMIT 3
+					SELECT department, count(*) AS cnt FROM People p GROUP BY department ORDER BY department LIMIT 2 OFFSET 1|MATCH (p:People) RETURN p.department AS department, count(*) AS cnt ORDER BY p.department SKIP 1 LIMIT 2
+					""")
+	void limitWithOffset(String sql, String cypher) {
+
+		var translator = SqlToCypher.defaultTranslator();
+		assertThat(translator.translate(sql)).isEqualTo(cypher);
+	}
+
 	private record SqlAndCypher(String name, String sql, String cypher) {
 		static SqlAndCypher of(String name, String sql, String cypher) {
 			return new SqlAndCypher(name, sql, cypher);

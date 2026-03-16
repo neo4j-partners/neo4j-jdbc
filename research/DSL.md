@@ -127,5 +127,5 @@ Methods available on `Select<?>` for query decomposition:
 | `$orderBy()` | `List<SortField<?>>` | Yes |
 | `$limit()` | `Field<?>` (nullable) | Yes |
 | `$distinct()` | `boolean` | Yes |
-| `$groupBy()` | `List<? extends GroupField>` | **No — needed for GROUP BY** |
-| `$having()` | `Condition` (nullable) | **No — needed for HAVING** |
+| `$groupBy()` | `List<? extends GroupField>` | Yes |
+| `$having()` | `Condition` (nullable) | Yes |
