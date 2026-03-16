@@ -622,3 +622,23 @@ WITH clause contains:
 Only the first category appears in the final RETURN statement.
 The other two participate in grouping/filtering but are invisible in results.
 ```
+
+---
+
+## Remaining: Relationship Property Aggregation
+
+The GROUP BY and HAVING work covers aggregation over node properties. A separate gap remains: aggregating over properties stored on Neo4j relationships.
+
+In the property graph model, relationships are first-class entities with their own properties. The pharma graph's `SHARES_CLAIMS_WITH` relationship between a pharmacy and a prescriber carries `claimCount` and `totalPapCopayAmount`. In Cypher, these are directly accessible:
+
+```cypher
+MATCH (p:ResolvedPharmacy)-[r:SHARES_CLAIMS_WITH]->(pr:ResolvedPrescriber)
+WHERE ANY(npi IN p.npis WHERE npi = '0433218191')
+RETURN pr.names, sum(r.claimCount) AS totalClaims
+```
+
+The `r.claimCount` references a property on the relationship itself, not on either node.
+
+In SQL, there is no syntax for this. A `NATURAL JOIN` between `ResolvedPharmacy` and `ResolvedPrescriber` translates to a Cypher `MATCH (p)-->(pr)` pattern, but the SQL translator only exposes node properties (columns on the "tables"). The relationship connecting the two tables is implicit — you can traverse it, but you cannot reference `r.claimCount` because `r` does not exist in the SQL model. SQL has no concept of a join edge carrying its own data.
+
+This is a fundamental mismatch between the relational model (joins are structural, stateless) and the property graph model (relationships are first-class entities with their own properties). The GROUP BY/HAVING implementation does not change this boundary. Queries that aggregate over relationship properties remain Cypher-only.

@@ -23,7 +23,10 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -120,6 +123,24 @@ final class TestUtils {
 			properties.put("s2c.prettyPrint", "false");
 		}
 		return driver.connect(url, properties);
+	}
+
+	static List<List<Object>> collectRows(ResultSet rs, String... columns) throws SQLException {
+		var rows = new ArrayList<List<Object>>();
+		while (rs.next()) {
+			var row = new ArrayList<Object>();
+			for (var col : columns) {
+				var value = rs.getObject(col);
+				if (value instanceof Number n) {
+					row.add(n.longValue());
+				}
+				else {
+					row.add(value);
+				}
+			}
+			rows.add(row);
+		}
+		return rows;
 	}
 
 }

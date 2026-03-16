@@ -152,7 +152,7 @@ step3() {
     # and so IT modules have their dependencies available.
     echo "--- Building all modules (no tests) ---"
     local build_rc=0
-    ./mvnw $MAVEN_OFFLINE -DskipTests $SKIP_FLAGS install \
+    ./mvnw $MAVEN_OFFLINE -DskipTests $SKIP_FLAGS -pl '!bundles/neo4j-jdbc-full-bundle,!bundles/neo4j-jdbc-bundle,!bundles/neo4j-jdbc-text2cypher-bundle' install \
         2>&1 | tee "$OUT/integration-build.log" || build_rc=$?
     if [[ $build_rc -ne 0 ]]; then
         echo "ERROR: Build failed (exit code $build_rc). Check $OUT/integration-build.log"

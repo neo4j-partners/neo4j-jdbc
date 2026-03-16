@@ -27,66 +27,24 @@
 
 ---
 
-## Phase 8: HAVING Integration Tests
+## Phase 8: HAVING Integration Tests — COMPLETE
 
-**Goal:** End-to-end validation of HAVING against a real Neo4j instance.
-**Estimated new tests:** ~23
-**Prerequisites:** Phase 7 complete, Docker available for Testcontainers
+**Status:** Done. 23 new integration tests in `HavingIT.java`, 0 failures. GroupByIT refactored (56 tests, 0 regressions). Total: 79 integration tests passing.
 
-These tests extend the existing `GroupByIT.java` file (or add a new `@Nested` class within it).
+**Refactoring:** Extracted `collectRows` helper from `GroupByIT` to `TestUtils` for shared use. Created `HavingIT.java` as a separate test class extending `IntegrationTestBase`.
 
-### 8.1 Basic HAVING Filtering (4 tests)
+### Completed Items
 
-- `HAVING count(*) > N` — verify rows are filtered
-- `HAVING sum(col) > N` — verify aggregate threshold
-- `HAVING avg(col) > N` — verify average filtering
-- `HAVING min(col) < N` / `HAVING max(col) > N`
+- **8.1 Basic HAVING Filtering (4 tests)** — count, sum, avg, max thresholds verified
+- **8.2 HAVING with Aggregate Not in SELECT (3 tests)** — Hidden `__having_col_*` columns confirmed absent from ResultSetMetaData
+- **8.3 Compound HAVING (3 tests)** — AND, OR, and nested `(AND) OR` conditions verified
+- **8.4 HAVING by Alias (2 tests)** — `HAVING cnt > 1` and `HAVING total > 50` resolve via AliasRegistry name-based fallback
+- **8.5 ORDER BY + HAVING Combined (3 tests)** — ORDER BY aggregate DESC, column ASC, and ORDER BY + LIMIT with HAVING
+- **8.6 HAVING + WHERE Interaction (2 tests)** — WHERE filters before aggregation, HAVING filters after; verified with precise row counts
+- **8.7 HAVING + JOIN (3 tests)** — NATURAL JOIN with HAVING count, HAVING not in SELECT (metadata check), compound HAVING with min(born)
+- **8.8 HAVING Kitchen Sink (3 tests)** — Full DISTINCT + WHERE + GROUP BY + HAVING + ORDER BY + LIMIT + OFFSET; multiple aggregates; Movies JOIN kitchen sink
 
-### 8.2 HAVING with Aggregate Not in SELECT (3 tests)
-
-Hidden `__having_col_*` columns must not appear in result set:
-- `SELECT name FROM People GROUP BY name HAVING count(*) > 1`
-- `SELECT dept FROM People GROUP BY dept HAVING avg(age) > 30`
-- `SELECT name, sum(age) FROM People GROUP BY name HAVING max(age) > 40`
-
-### 8.3 Compound HAVING (3 tests)
-
-- `HAVING count(*) > 1 AND max(age) > 25`
-- `HAVING count(*) > 5 OR min(age) < 20`
-- Nested: `HAVING (count(*) > 1 AND max(age) > 25) OR dept = 'Engineering'`
-
-### 8.4 HAVING by Alias (2 tests)
-
-- `SELECT count(*) AS cnt FROM People GROUP BY name HAVING cnt > 1`
-- `SELECT sum(age) AS total FROM People GROUP BY dept HAVING total > 50`
-
-### 8.5 ORDER BY + HAVING Combined (3 tests)
-
-- `... HAVING count(*) > 1 ORDER BY count(*) DESC`
-- `... HAVING sum(age) > 50 ORDER BY name ASC`
-- `... HAVING count(*) > 1 ORDER BY max(age) DESC LIMIT 5`
-
-### 8.6 HAVING + WHERE Interaction (2 tests)
-
-Verify WHERE filters before aggregation and HAVING filters after:
-- `WHERE age > 20 ... HAVING count(*) > 1` — WHERE reduces input rows
-- `WHERE dept = 'Engineering' ... HAVING sum(age) > 50`
-
-### 8.7 HAVING + JOIN (3 tests)
-
-Using Movies graph with NATURAL JOIN:
-- `SELECT m.title, count(*) FROM Movie m NATURAL JOIN Person p GROUP BY m.title HAVING count(*) > 5`
-- JOIN with HAVING on aggregate not in SELECT
-- JOIN with compound HAVING
-
-### 8.8 HAVING Kitchen Sink (3 tests)
-
-Full combination queries against Movies graph:
-- `SELECT DISTINCT ... WHERE ... GROUP BY ... HAVING ... ORDER BY ... LIMIT ... OFFSET ...`
-- Verify result correctness against known Movies graph data
-- Multiple aggregates with HAVING filtering
-
-**Exit criteria:** All HAVING integration tests pass, no regression in existing 56 tests. Run via `./mvnw -DskipUTs -Dcheckstyle.skip=true -pl neo4j-jdbc-it/neo4j-jdbc-it-cp verify`.
+**Run command:** `./mvnw -DskipUTs -Dcheckstyle.skip=true -pl neo4j-jdbc-it/neo4j-jdbc-it-cp -Dit.test="GroupByIT,HavingIT" verify`
 
 ---
 

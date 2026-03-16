@@ -19,7 +19,6 @@
 package org.neo4j.jdbc.it.cp;
 
 import java.io.IOException;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
@@ -74,7 +73,7 @@ class GroupByIT extends IntegrationTestBase {
 					var stmt = connection.createStatement();
 					var rs = stmt
 						.executeQuery("SELECT department, count(*) AS cnt FROM People p GROUP BY department")) {
-				var rows = collectRows(rs, "department", "cnt");
+				var rows = TestUtils.collectRows(rs, "department", "cnt");
 				assertThat(rows).hasSize(3);
 				assertThat(rows).containsExactlyInAnyOrder(List.of("Engineering", 2L), List.of("Sales", 2L),
 						List.of("Marketing", 1L));
@@ -87,7 +86,7 @@ class GroupByIT extends IntegrationTestBase {
 					var stmt = connection.createStatement();
 					var rs = stmt
 						.executeQuery("SELECT department, sum(age) AS total FROM People p GROUP BY department")) {
-				var rows = collectRows(rs, "department", "total");
+				var rows = TestUtils.collectRows(rs, "department", "total");
 				assertThat(rows).hasSize(3);
 				assertThat(rows).containsExactlyInAnyOrder(List.of("Engineering", 55L), List.of("Sales", 63L),
 						List.of("Marketing", 32L));
@@ -124,7 +123,7 @@ class GroupByIT extends IntegrationTestBase {
 					var stmt = connection.createStatement();
 					var rs = stmt.executeQuery(
 							"SELECT department, min(age) AS youngest, max(age) AS oldest FROM People p GROUP BY department")) {
-				var rows = collectRows(rs, "department", "youngest", "oldest");
+				var rows = TestUtils.collectRows(rs, "department", "youngest", "oldest");
 				assertThat(rows).hasSize(3);
 				assertThat(rows).containsExactlyInAnyOrder(List.of("Engineering", 25L, 30L), List.of("Sales", 28L, 35L),
 						List.of("Marketing", 32L, 32L));
@@ -173,7 +172,7 @@ class GroupByIT extends IntegrationTestBase {
 					var stmt = connection.createStatement();
 					var rs = stmt
 						.executeQuery("SELECT name, count(*) AS cnt FROM People p GROUP BY name ORDER BY name")) {
-				var rows = collectRows(rs, "name", "cnt");
+				var rows = TestUtils.collectRows(rs, "name", "cnt");
 				assertThat(rows).hasSize(5);
 				for (var row : rows) {
 					assertThat(row.get(1)).isEqualTo(1L);
@@ -271,7 +270,7 @@ class GroupByIT extends IntegrationTestBase {
 					var stmt = connection.createStatement();
 					var rs = stmt.executeQuery(
 							"SELECT department, name, count(*) AS cnt FROM People p GROUP BY department, name")) {
-				var rows = collectRows(rs, "department", "name", "cnt");
+				var rows = TestUtils.collectRows(rs, "department", "name", "cnt");
 				assertThat(rows).hasSize(5);
 				for (var row : rows) {
 					assertThat(row.get(2)).isEqualTo(1L);
@@ -301,7 +300,7 @@ class GroupByIT extends IntegrationTestBase {
 					var stmt = connection.createStatement();
 					var rs = stmt
 						.executeQuery("SELECT department, count(*) AS cnt FROM People p GROUP BY department, name")) {
-				var rows = collectRows(rs, "department", "cnt");
+				var rows = TestUtils.collectRows(rs, "department", "cnt");
 				assertThat(rows).hasSize(5);
 			}
 		}
@@ -379,7 +378,7 @@ class GroupByIT extends IntegrationTestBase {
 					var stmt = connection.createStatement();
 					var rs = stmt.executeQuery(
 							"SELECT department, count(*) AS cnt FROM People p GROUP BY department ORDER BY cnt DESC")) {
-				var rows = collectRows(rs, "department", "cnt");
+				var rows = TestUtils.collectRows(rs, "department", "cnt");
 				assertThat(rows).hasSize(3);
 				// Marketing (1) should be last; Engineering (2) and Sales (2) first in
 				// some
@@ -447,7 +446,7 @@ class GroupByIT extends IntegrationTestBase {
 					var stmt = connection.createStatement();
 					var rs = stmt.executeQuery(
 							"SELECT department, min(age) AS youngest FROM People p GROUP BY department ORDER BY youngest")) {
-				var rows = collectRows(rs, "department", "youngest");
+				var rows = TestUtils.collectRows(rs, "department", "youngest");
 				assertThat(rows).containsExactly(List.of("Engineering", 25L), List.of("Sales", 28L),
 						List.of("Marketing", 32L));
 			}
@@ -466,7 +465,7 @@ class GroupByIT extends IntegrationTestBase {
 					var stmt = connection.createStatement();
 					var rs = stmt
 						.executeQuery("SELECT department, count(*) AS cnt FROM People p GROUP BY department LIMIT 2")) {
-				var rows = collectRows(rs, "department", "cnt");
+				var rows = TestUtils.collectRows(rs, "department", "cnt");
 				assertThat(rows).hasSize(2);
 			}
 		}
@@ -477,7 +476,7 @@ class GroupByIT extends IntegrationTestBase {
 					var stmt = connection.createStatement();
 					var rs = stmt.executeQuery(
 							"SELECT department, count(*) AS cnt FROM People p GROUP BY department ORDER BY cnt DESC LIMIT 2")) {
-				var rows = collectRows(rs, "department", "cnt");
+				var rows = TestUtils.collectRows(rs, "department", "cnt");
 				assertThat(rows).hasSize(2);
 				// Both rows should have count 2 (Engineering and Sales)
 				for (var row : rows) {
@@ -555,7 +554,7 @@ class GroupByIT extends IntegrationTestBase {
 					var stmt = connection.createStatement();
 					var rs = stmt.executeQuery(
 							"SELECT DISTINCT department, count(*) AS cnt FROM People p GROUP BY department")) {
-				var rows = collectRows(rs, "department", "cnt");
+				var rows = TestUtils.collectRows(rs, "department", "cnt");
 				assertThat(rows).hasSize(3);
 			}
 		}
@@ -589,7 +588,7 @@ class GroupByIT extends IntegrationTestBase {
 					var stmt = connection.createStatement();
 					var rs = stmt.executeQuery(
 							"SELECT department, count(*) AS cnt FROM People p WHERE age > 28 GROUP BY department ORDER BY department")) {
-				var rows = collectRows(rs, "department", "cnt");
+				var rows = TestUtils.collectRows(rs, "department", "cnt");
 				// Alice(30), Charlie(35), Eve(32) pass the filter
 				assertThat(rows).containsExactly(List.of("Engineering", 1L), List.of("Marketing", 1L),
 						List.of("Sales", 1L));
@@ -616,7 +615,7 @@ class GroupByIT extends IntegrationTestBase {
 					var stmt = connection.createStatement();
 					var rs = stmt.executeQuery(
 							"SELECT department, sum(age) AS total FROM People p WHERE age BETWEEN 25 AND 30 GROUP BY department ORDER BY department")) {
-				var rows = collectRows(rs, "department", "total");
+				var rows = TestUtils.collectRows(rs, "department", "total");
 				// Alice(30) + Bob(25) = Engineering 55, Diana(28) = Sales 28
 				assertThat(rows).containsExactly(List.of("Engineering", 55L), List.of("Sales", 28L));
 			}
@@ -730,7 +729,7 @@ class GroupByIT extends IntegrationTestBase {
 					var stmt = connection.createStatement();
 					var rs = stmt.executeQuery(
 							"SELECT department, count(*) AS cnt FROM People p GROUP BY department ORDER BY department")) {
-				var rows = collectRows(rs, "department", "cnt");
+				var rows = TestUtils.collectRows(rs, "department", "cnt");
 				assertThat(rows).containsExactly(List.of("Engineering", 2L), List.of("Marketing", 1L),
 						List.of("Sales", 2L));
 			}
@@ -877,7 +876,7 @@ class GroupByIT extends IntegrationTestBase {
 					var stmt = connection.createStatement();
 					var rs = stmt.executeQuery(
 							"SELECT department, count(*) AS cnt, sum(age) AS total FROM People p GROUP BY department ORDER BY total DESC")) {
-				var rows = collectRows(rs, "department", "cnt", "total");
+				var rows = TestUtils.collectRows(rs, "department", "cnt", "total");
 				assertThat(rows).containsExactly(List.of("Sales", 2L, 63L), List.of("Engineering", 2L, 55L),
 						List.of("Marketing", 1L, 32L));
 			}
@@ -983,31 +982,6 @@ class GroupByIT extends IntegrationTestBase {
 			}
 		}
 
-	}
-
-	// -- Helper methods -------------------------------------------------------
-
-	/**
-	 * Collects ResultSet rows into a list of lists. Each inner list contains the values
-	 * for the specified columns. String columns are read as getString, numeric columns as
-	 * getLong.
-	 */
-	private static List<List<Object>> collectRows(ResultSet rs, String... columns) throws SQLException {
-		var rows = new ArrayList<List<Object>>();
-		while (rs.next()) {
-			var row = new ArrayList<Object>();
-			for (var col : columns) {
-				var value = rs.getObject(col);
-				if (value instanceof Number n) {
-					row.add(n.longValue());
-				}
-				else {
-					row.add(value);
-				}
-			}
-			rows.add(row);
-		}
-		return rows;
 	}
 
 }
