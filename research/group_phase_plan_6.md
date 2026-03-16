@@ -112,14 +112,27 @@ The current `collectAggregates()` handles: `And`, `Or`, `Xor`, `Not`, `Gt`, `Ge`
 
 Missing: `IsNull`, `IsNotNull`, `InList`. The row-comparison types, `Like`, and `FieldCondition` are extremely unlikely in HAVING but could theoretically appear.
 
-**Analysis**:
+**Analysis** (verified against jOOQ 3.19.30 source at `/Users/ryanknight/projects/neo4j-labs/jOOQ`):
 - `HAVING count(*) IS NULL` — rare but valid SQL. Easy to support.
 - `HAVING count(*) IN (1, 2, 3)` — uncommon but valid. The `$list()` method returns field elements that could contain aggregates.
 - Row comparisons in HAVING — practically impossible. Skip.
-- `Like` in HAVING — e.g., `HAVING max(name) LIKE 'A%'` — possible with string aggregates. The `$arg1()` is a Field, `$arg2()` is typically a Param. Easy to support.
+- `Like` in HAVING — e.g., `HAVING max(name) LIKE 'A%'` — possible with string aggregates. `$arg1()` is a Field, `$arg2()` is a Field<String>. Also has `$escape()` (Character, not Field — no aggregate concern).
+- `NotLike` — separate type from `Like` with identical structure. `HAVING max(name) NOT LIKE 'A%'` is valid.
+- `LikeIgnoreCase` — jOOQ's representation of SQL `ILIKE`. **There is no `QOM.ILike`** — jOOQ uses `LikeIgnoreCase` instead. Same `$arg1()`/`$arg2()` structure. jOOQ's parser produces this from `ILIKE` syntax.
+- `NotLikeIgnoreCase` — `NOT ILIKE` variant. Same structure.
+- `NotInList` — `HAVING count(*) NOT IN (1, 2, 3)`. Same structure as `InList`: `$field()` + `$list()`.
+- `IsDistinctFrom` / `IsNotDistinctFrom` — NULL-safe comparison operators. Take two `Field<T>` args via `$arg1()` / `$arg2()`. Could appear in HAVING.
 - `FieldCondition` — boolean params. No aggregate content. Skip.
 
-**Decision: Add `IsNull`, `IsNotNull`, `InList`, and `Like` to `collectAggregates()`. Skip row comparisons and `FieldCondition`. This covers all condition types that realistically appear in HAVING clauses and maintains parity with the translator's `condition()` method for field-bearing conditions.**
+**Decision: Add `IsNull`, `IsNotNull`, `InList`, `NotInList`, `Like`, `NotLike`, `LikeIgnoreCase`, `NotLikeIgnoreCase`, `IsDistinctFrom`, and `IsNotDistinctFrom` to `collectAggregates()`. Skip row comparisons and `FieldCondition`. This covers all field-bearing condition types that could appear in HAVING clauses.**
+
+### Q3a: Does `COUNT(DISTINCT ...)` need special handling?
+
+**Context**: `HAVING count(DISTINCT name) > 5` — does `isAggregate()` recognize `count(DISTINCT name)`?
+
+**Analysis**: jOOQ uses a single `QOM.Count` class with a `$distinct()` boolean flag. There is no separate `QOM.CountDistinct` type. Therefore `isAggregate()` (which checks `instanceof QOM.Count`) already handles `COUNT(DISTINCT x)` correctly. Structural matching in `AliasRegistry` also works: existing tests at `FieldMatcherTests.java:196` confirm `count(name)` vs `count(DISTINCT name)` returns `false` (correctly distinguishes them), and line 207 confirms `count(DISTINCT name)` vs `count(DISTINCT name)` returns `true` (correctly matches them).
+
+**Decision: No production code change needed. Add a `count(DISTINCT ...)` test case to 6.9 to prove the end-to-end pipeline handles distinct aggregates in HAVING.**
 
 ### Q4: How should duplicate HAVING-only aggregates be handled?
 
@@ -178,13 +191,13 @@ Result: `__having_col_0 + __having_col_1 > 100` ✓
 
 ### 6.2 — Extend `collectAggregates()` with missing condition types
 
-**What**: Add `IsNull`, `IsNotNull`, `InList`, and `Like` support to the `collectAggregatesFromCondition()` method in `FieldMatcher.java`.
+**What**: Add `IsNull`, `IsNotNull`, `InList`, `NotInList`, `Like`, `NotLike`, `LikeIgnoreCase`, `NotLikeIgnoreCase`, `IsDistinctFrom`, and `IsNotDistinctFrom` support to the `collectAggregatesFromCondition()` method in `FieldMatcher.java`.
 
 **Why**: These are valid SQL condition types that can appear in HAVING clauses. The current implementation silently ignores aggregates inside these conditions, which would cause the hidden-column injection (6.4) to miss them — producing invalid Cypher.
 
 **File**: `FieldMatcher.java`, method `collectAggregatesFromCondition()` (lines 140–185)
 
-**Changes**: Add four new `else if` branches after the `Between` handler (line 184):
+**Changes**: Add ten new `else if` branches after the `Between` handler (line 184):
 
 ```java
 else if (condition instanceof QOM.IsNull isNull) {
@@ -203,12 +216,42 @@ else if (condition instanceof QOM.Like like) {
     collectAggregatesFromField(like.$arg1(), result);
     collectAggregatesFromField(like.$arg2(), result);
 }
+else if (condition instanceof QOM.NotLike notLike) {
+    collectAggregatesFromField(notLike.$arg1(), result);
+    collectAggregatesFromField(notLike.$arg2(), result);
+}
+else if (condition instanceof QOM.LikeIgnoreCase likeIc) {
+    collectAggregatesFromField(likeIc.$arg1(), result);
+    collectAggregatesFromField(likeIc.$arg2(), result);
+}
+else if (condition instanceof QOM.NotLikeIgnoreCase notLikeIc) {
+    collectAggregatesFromField(notLikeIc.$arg1(), result);
+    collectAggregatesFromField(notLikeIc.$arg2(), result);
+}
+else if (condition instanceof QOM.NotInList<?> notInList) {
+    collectAggregatesFromField(notInList.$field(), result);
+    for (var element : notInList.$list()) {
+        collectAggregatesFromField(element, result);
+    }
+}
+else if (condition instanceof QOM.IsDistinctFrom<?> isDistinctFrom) {
+    collectAggregatesFromField(isDistinctFrom.$arg1(), result);
+    collectAggregatesFromField(isDistinctFrom.$arg2(), result);
+}
+else if (condition instanceof QOM.IsNotDistinctFrom<?> isNotDistinctFrom) {
+    collectAggregatesFromField(isNotDistinctFrom.$arg1(), result);
+    collectAggregatesFromField(isNotDistinctFrom.$arg2(), result);
+}
 ```
 
-**Notes**:
-- `QOM.IsNull.$arg1()` returns a `Field<?>` (confirmed from `condition()` at line 2056)
-- `QOM.InList.$field()` returns the search field, `$list()` returns the value list (confirmed from line 2117)
-- `QOM.Like.$arg1()` is the expression, `$arg2()` is the pattern (confirmed from line 2132)
+**Notes** (verified against jOOQ 3.19.30 source):
+- `QOM.IsNull.$arg1()` returns a `Field<?>`
+- `QOM.InList.$field()` returns the search field, `$list()` returns the value list
+- `QOM.NotInList` has identical structure to `InList`
+- `QOM.Like.$arg1()` is the expression, `$arg2()` is the pattern. `$escape()` is `Character` (not a Field — no aggregate concern)
+- `QOM.NotLike`, `QOM.LikeIgnoreCase`, `QOM.NotLikeIgnoreCase` have identical structure to `Like`
+- `QOM.ILike` does not exist — jOOQ uses `QOM.LikeIgnoreCase` instead
+- `QOM.IsDistinctFrom` / `QOM.IsNotDistinctFrom` have same two-`Field<T>` structure as comparison operators
 - `collectAggregatesFromField()` handles null safely (line 188)
 
 **After**: Run `./mvnw -pl neo4j-jdbc-translator/impl spring-javaformat:apply` then run tests.
@@ -217,7 +260,7 @@ else if (condition instanceof QOM.Like like) {
 
 ### 6.3 — Add tests for new `collectAggregates()` condition types
 
-**What**: Add test cases to `FieldMatcherTests.CollectAggregatesTests` for the four new condition types.
+**What**: Add test cases to `FieldMatcherTests.CollectAggregatesTests` for the new condition types.
 
 **File**: `FieldMatcherTests.java`, nested class `CollectAggregatesTests` (after line 424)
 
@@ -271,7 +314,7 @@ else if (condition instanceof QOM.Like like) {
    }
    ```
 
-**After**: Run formatter then full test suite. Expect 411+ tests (407 + 4 new), 0 failures.
+**After**: Run formatter then full test suite. Expect 417+ tests (407 + 10 new), 0 failures.
 
 ---
 
@@ -289,17 +332,18 @@ else if (condition instanceof QOM.Like like) {
 // to be projected in the WITH so the post-WITH WHERE can reference them,
 // but they are NOT added to returnExpressions (excluded from final RETURN).
 if (havingCondition != null) {
-    var havingAliasCounter = new AtomicInteger(0);
     for (var agg : FieldMatcher.collectAggregates(havingCondition)) {
         if (registry.resolve(agg) == null) {
             var expr = expression(agg);
-            var alias = "__having_col_" + havingAliasCounter.getAndIncrement();
+            var alias = "__having_col_" + aliasCounter.getAndIncrement();
             withExpressions.add((IdentifiableElement) expr.as(alias));
             registry.register(agg, alias);
         }
     }
 }
 ```
+
+**Note on counter**: This reuses the shared `aliasCounter` (an `AtomicInteger` declared earlier in `buildWithClause()`) that is also used by the SELECT loop (`__with_col_N`) and GROUP BY loop (`__group_col_N`). Each prefix is distinct, so there is no collision risk. Using the shared counter is consistent with the existing pattern — no separate counter is needed.
 
 **Why this position**:
 - After the SELECT and GROUP BY loops: the registry contains all SELECT and GROUP BY-only aliases. `registry.resolve(agg)` can correctly identify aggregates that are already registered.
@@ -426,13 +470,24 @@ MATCH (p:People) WITH count(p) AS __with_col_0 WHERE __with_col_0 > 5 RETURN __w
 
 | # | SQL | Expected Cypher | Scenario |
 |---|-----|-----------------|----------|
-| 1 | `SELECT name FROM People p GROUP BY name HAVING count(*) > 5` | `MATCH (p:People) WITH p.name AS name, count(*) AS __having_col_0 WHERE __having_col_0 > 5 RETURN name` | HAVING-only aggregate (core Phase 6 feature) |
-| 2 | `SELECT count(*) FROM People p HAVING count(*) > 5` | `MATCH (p:People) WITH count(*) AS __with_col_0 WHERE __with_col_0 > 5 RETURN __with_col_0` | HAVING without GROUP BY |
-| 3 | `SELECT count(*) FROM People p GROUP BY name HAVING name = 'Alice'` | `MATCH (p:People) WITH count(*) AS __with_col_0, p.name AS __group_col_1 WHERE __group_col_1 = 'Alice' RETURN __with_col_0` | HAVING with non-aggregate condition on GROUP BY-only column |
-| 4 | `SELECT name, count(*) AS cnt FROM People p GROUP BY name HAVING cnt > 5` | `MATCH (p:People) WITH p.name AS name, count(*) AS cnt WHERE cnt > 5 RETURN name, cnt` | HAVING by alias |
-| 5 | `SELECT name FROM People p GROUP BY name HAVING count(*) > 5 AND max(age) > 50` | `MATCH (p:People) WITH p.name AS name, count(*) AS __having_col_0, max(p.age) AS __having_col_1 WHERE (__having_col_0 > 5 AND __having_col_1 > 50) RETURN name` | Multiple HAVING-only aggregates |
-| 6 | `SELECT name, sum(age) FROM People p GROUP BY name HAVING sum(age) > 100 AND count(*) > 2` | (sum(age) from SELECT + count(*) as hidden) | Mixed: one aggregate in SELECT, one HAVING-only |
-| 7 | `SELECT name FROM People p GROUP BY name HAVING count(*) > 5 ORDER BY name` | (hidden count + ORDER BY on GROUP BY column) | HAVING + ORDER BY combination |
+| 1 | `SELECT name FROM People p GROUP BY name HAVING count(*) > 5` | *(capture actual output)* | HAVING-only aggregate (core Phase 6 feature) |
+| 2 | `SELECT count(*) FROM People p HAVING count(*) > 5` | *(capture actual output)* | HAVING without GROUP BY |
+| 3 | `SELECT count(*) FROM People p GROUP BY name HAVING name = 'Alice'` | *(capture actual output)* | HAVING with non-aggregate condition on GROUP BY-only column |
+| 4 | `SELECT name, count(*) AS cnt FROM People p GROUP BY name HAVING cnt > 5` | *(capture actual output — see note below)* | HAVING by alias |
+| 5 | `SELECT name FROM People p GROUP BY name HAVING count(*) > 5 AND max(age) > 50` | *(capture actual output)* | Multiple HAVING-only aggregates |
+| 6 | `SELECT name, sum(age) FROM People p GROUP BY name HAVING sum(age) > 100 AND count(*) > 2` | *(capture actual output)* | Mixed: one aggregate in SELECT, one HAVING-only |
+| 7 | `SELECT name FROM People p GROUP BY name HAVING count(*) > 5 ORDER BY name` | *(capture actual output)* | HAVING + ORDER BY combination |
+| 8 | `SELECT name FROM People p GROUP BY name HAVING count(DISTINCT age) > 3` | *(capture actual output)* | HAVING-only DISTINCT aggregate (validates Q3a) |
+
+**Structural expectations** (what to verify in the captured output, even though exact formatting may vary):
+- Test 1: WITH clause must contain `count(*)` (or `count(p)`) aliased as `__having_col_N`, and WHERE must reference that alias. The aggregate must NOT appear in RETURN.
+- Test 2: `count(*)` is in both SELECT and HAVING — injection should skip it (already registered from SELECT). Only one `__with_col_0` in WITH.
+- Test 3: GROUP BY-only column `name` appears as `__group_col_N` in WITH, referenced in WHERE.
+- Test 4: `cnt` alias from SELECT must resolve in HAVING. No hidden columns needed.
+- Test 5: Two hidden columns (`__having_col_N`, `__having_col_M`) for the two HAVING-only aggregates.
+- Test 6: `sum(age)` from SELECT is NOT duplicated. Only `count(*)` gets a hidden column.
+- Test 7: ORDER BY `name` must reference the same alias used in WITH/RETURN.
+- Test 8: `count(DISTINCT age)` must appear as a hidden column. jOOQ uses `QOM.Count` with `$distinct()=true` — `isAggregate()` handles this (see Q3a).
 
 **Important implementation notes**:
 
@@ -440,12 +495,14 @@ MATCH (p:People) WITH count(p) AS __with_col_0 WHERE __with_col_0 > 5 RETURN __w
 - Test case 2 validates HAVING without GROUP BY (Q10 from `group_phase_4_plan.md`).
 - Test case 4 validates alias-form HAVING. This may need diagnostic investigation — jOOQ may resolve `cnt` differently depending on context. Parse the SQL first and inspect `$having()` to confirm what jOOQ produces before writing the expected output.
 - Test case 6 is important: it confirms that `collectAggregates()` deduplication works (sum(age) is in SELECT and HAVING, count(*) is HAVING-only).
-- The exact Cypher output for each test depends on the translator's behavior. **Run each SQL through the translator after implementing 6.4 and capture the actual output before writing assertions.** Don't guess.
+- Test case 8 validates that `COUNT(DISTINCT ...)` flows through the entire pipeline: `isAggregate()` → `collectAggregates()` → hidden column injection → registry resolution.
+- **Procedure: Run each SQL through the translator after implementing 6.4 and capture the actual output before writing assertions.** Do not guess exact Cypher strings. Verify the structural expectations above hold, then use the actual output as the expected value.
 
-**Warning on test case expected values**: The expected Cypher strings above are **best estimates** based on code analysis. Several uncertainties exist:
-- Whether `count(*)` translates to `count(*)` or `count(p)` depends on context and jOOQ version. Test case 1 uses GROUP BY which changes context from test case 2.
+**Why capture-then-assert**: Several formatting details are unpredictable from static analysis:
+- Whether `count(*)` translates to `count(*)` or `count(p)` depends on context (single node in scope) and jOOQ version.
 - Whether parentheses appear around AND conditions depends on the Cypher builder library.
 - Column ordering in WITH depends on SELECT field order and GROUP BY field order.
+- The `__having_col_N` suffix depends on the shared `aliasCounter` value, which varies with the number of SELECT and GROUP BY columns processed first.
 
 **After**: Run formatter then full test suite after each test addition. Verify total count increases appropriately.
 
@@ -463,12 +520,13 @@ MATCH (p:People) WITH count(p) AS __with_col_0 WHERE __with_col_0 > 5 RETURN __w
 
 **Quality gate criteria**:
 - [ ] All existing tests pass (zero regressions)
-- [ ] New `collectAggregates()` tests pass (4 new cases for IsNull, IsNotNull, InList, Like)
-- [ ] New end-to-end tests pass (7 new test cases from 6.9)
+- [ ] New `collectAggregates()` tests pass (10 new cases for IsNull, IsNotNull, InList, NotInList, Like, NotLike, LikeIgnoreCase, NotLikeIgnoreCase, IsDistinctFrom, IsNotDistinctFrom)
+- [ ] New end-to-end tests pass (8 new test cases from 6.9)
 - [ ] `havingCondition()` has simplified signature (no `withExpressions` parameter)
 - [ ] Hidden columns appear in WITH but not in RETURN
 - [ ] Spring formatting applied cleanly
 - [ ] HAVING-only aggregates produce valid Cypher with `__having_col_N` aliases
+- [ ] `COUNT(DISTINCT ...)` in HAVING produces correct hidden column (test case 8)
 
 ---
 
@@ -492,6 +550,10 @@ The items above are ordered by dependency:
 
 **Critical path**: 6.2 → 6.4 → 6.9. Items 6.3 and 6.5 can be done in parallel with their successors. Items 6.6–6.8 are verification only — they have no code changes and are validated by 6.9's tests.
 
+**Expected final test count**: 407 (baseline) + 10 (collectAggregates unit tests) + 8 (end-to-end HAVING tests) = 425 tests.
+
+**Actual final test count**: 425 tests, 0 failures, 0 errors. All quality gate criteria met.
+
 **Run tests after every step** (BP-7 from `group_phase_4_plan.md`). Apply formatting after every code change (BP-8).
 
 ---
@@ -503,7 +565,7 @@ The items above are ordered by dependency:
 | `expression(agg)` call during injection interacts with tables/scope unexpectedly | Low | High | Q1 decision (inject before registry assignment) isolates the call. Tables are populated at this point (line 464–465). |
 | jOOQ resolves HAVING alias-form differently than expected | Medium | Medium | Write a diagnostic test (parse SQL, inspect `$having()`) before writing the end-to-end assertion. |
 | Cypher builder library adds unexpected parentheses or formatting | Medium | Low | Use actual translator output to set expectations, not hand-written strings. |
-| `collectAggregates()` misses an aggregate in a complex expression tree | Low | High | The 13 unit tests (9 existing + 4 new) cover all realistic HAVING patterns. The recursive walker is straightforward. |
+| `collectAggregates()` misses an aggregate in a complex expression tree | Low | High | The 19 unit tests (9 existing + 10 new) cover all realistic HAVING patterns. The recursive walker is straightforward. |
 | Hidden column alias collides with user-defined alias | Very Low | Medium | The `__having_col_` prefix is synthetic and extremely unlikely to collide with real SQL aliases. |
 
 ---
@@ -512,9 +574,9 @@ The items above are ordered by dependency:
 
 | File | Changes |
 |------|---------|
-| `FieldMatcher.java` | Add `IsNull`, `IsNotNull`, `InList`, `Like` to `collectAggregatesFromCondition()` |
-| `FieldMatcherTests.java` | Add 4 test cases for new condition types |
+| `FieldMatcher.java` | Add `IsNull`, `IsNotNull`, `InList`, `NotInList`, `Like`, `NotLike`, `LikeIgnoreCase`, `NotLikeIgnoreCase`, `IsDistinctFrom`, `IsNotDistinctFrom` to `collectAggregatesFromCondition()` |
+| `FieldMatcherTests.java` | Add 10 test cases for new condition types |
 | `SqlToCypher.java` | Insert HAVING injection block in `buildWithClause()` (6.4), simplify `havingCondition()` signature (6.5) |
-| `SqlToCypherTests.java` | Add ~7 end-to-end HAVING test cases (6.9) |
+| `SqlToCypherTests.java` | Add 8 end-to-end HAVING test cases (6.9) |
 
 **No new files created.** All changes are modifications to existing files.

@@ -423,6 +423,113 @@ class FieldMatcherTests extends QomTestSupport {
 			assertThat(aggregates.get(0)).isInstanceOf(QOM.Count.class);
 		}
 
+		@Test
+		@DisplayName("IsNull: HAVING count(*) IS NULL returns 1 aggregate")
+		void isNull() {
+			var select = parseSelect("SELECT name, count(*) FROM People GROUP BY name HAVING count(*) IS NULL");
+			var aggregates = FieldMatcher.collectAggregates(select.$having());
+
+			assertThat(aggregates).hasSize(1);
+			assertThat(aggregates.get(0)).isInstanceOf(QOM.Count.class);
+		}
+
+		@Test
+		@DisplayName("IsNotNull: HAVING max(age) IS NOT NULL returns 1 aggregate")
+		void isNotNull() {
+			var select = parseSelect("SELECT name, max(age) FROM People GROUP BY name HAVING max(age) IS NOT NULL");
+			var aggregates = FieldMatcher.collectAggregates(select.$having());
+
+			assertThat(aggregates).hasSize(1);
+			assertThat(aggregates.get(0)).isInstanceOf(QOM.Max.class);
+		}
+
+		@Test
+		@DisplayName("InList: HAVING count(*) IN (1, 2, 3) returns 1 aggregate")
+		void inList() {
+			var select = parseSelect("SELECT name, count(*) FROM People GROUP BY name HAVING count(*) IN (1, 2, 3)");
+			var aggregates = FieldMatcher.collectAggregates(select.$having());
+
+			assertThat(aggregates).hasSize(1);
+			assertThat(aggregates.get(0)).isInstanceOf(QOM.Count.class);
+		}
+
+		@Test
+		@DisplayName("Like: HAVING max(name) LIKE 'A%' returns 1 aggregate")
+		void like() {
+			var select = parseSelect(
+					"SELECT department, max(name) FROM Employees GROUP BY department HAVING max(name) LIKE 'A%'");
+			var aggregates = FieldMatcher.collectAggregates(select.$having());
+
+			assertThat(aggregates).hasSize(1);
+			assertThat(aggregates.get(0)).isInstanceOf(QOM.Max.class);
+		}
+
+		@Test
+		@DisplayName("NotLike: HAVING max(name) NOT LIKE 'A%' returns 1 aggregate")
+		void notLike() {
+			var select = parseSelect(
+					"SELECT department, max(name) FROM Employees GROUP BY department HAVING max(name) NOT LIKE 'A%'");
+			var aggregates = FieldMatcher.collectAggregates(select.$having());
+
+			assertThat(aggregates).hasSize(1);
+			assertThat(aggregates.get(0)).isInstanceOf(QOM.Max.class);
+		}
+
+		@Test
+		@DisplayName("NotInList: HAVING count(*) NOT IN (1, 2, 3) returns 1 aggregate")
+		void notInList() {
+			var select = parseSelect(
+					"SELECT name, count(*) FROM People GROUP BY name HAVING count(*) NOT IN (1, 2, 3)");
+			var aggregates = FieldMatcher.collectAggregates(select.$having());
+
+			assertThat(aggregates).hasSize(1);
+			assertThat(aggregates.get(0)).isInstanceOf(QOM.Count.class);
+		}
+
+		@Test
+		@DisplayName("IsDistinctFrom: HAVING count(*) IS DISTINCT FROM 0 returns 1 aggregate")
+		void isDistinctFrom() {
+			var select = parseSelect(
+					"SELECT name, count(*) FROM People GROUP BY name HAVING count(*) IS DISTINCT FROM 0");
+			var aggregates = FieldMatcher.collectAggregates(select.$having());
+
+			assertThat(aggregates).hasSize(1);
+			assertThat(aggregates.get(0)).isInstanceOf(QOM.Count.class);
+		}
+
+		@Test
+		@DisplayName("IsNotDistinctFrom: HAVING count(*) IS NOT DISTINCT FROM 5 returns 1 aggregate")
+		void isNotDistinctFrom() {
+			var select = parseSelect(
+					"SELECT name, count(*) FROM People GROUP BY name HAVING count(*) IS NOT DISTINCT FROM 5");
+			var aggregates = FieldMatcher.collectAggregates(select.$having());
+
+			assertThat(aggregates).hasSize(1);
+			assertThat(aggregates.get(0)).isInstanceOf(QOM.Count.class);
+		}
+
+		@Test
+		@DisplayName("LikeIgnoreCase: HAVING max(name) ILIKE 'a%' returns 1 aggregate")
+		void likeIgnoreCase() {
+			var select = parseSelect(
+					"SELECT department, max(name) FROM Employees GROUP BY department HAVING max(name) ILIKE 'a%'");
+			var aggregates = FieldMatcher.collectAggregates(select.$having());
+
+			assertThat(aggregates).hasSize(1);
+			assertThat(aggregates.get(0)).isInstanceOf(QOM.Max.class);
+		}
+
+		@Test
+		@DisplayName("NotLikeIgnoreCase: HAVING max(name) NOT ILIKE 'a%' returns 1 aggregate")
+		void notLikeIgnoreCase() {
+			var select = parseSelect(
+					"SELECT department, max(name) FROM Employees GROUP BY department HAVING max(name) NOT ILIKE 'a%'");
+			var aggregates = FieldMatcher.collectAggregates(select.$having());
+
+			assertThat(aggregates).hasSize(1);
+			assertThat(aggregates.get(0)).isInstanceOf(QOM.Max.class);
+		}
+
 	}
 
 	// -------------------------------------------------------------------------

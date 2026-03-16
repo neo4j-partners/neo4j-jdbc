@@ -125,8 +125,11 @@ final class FieldMatcher {
 	 * Walks a jOOQ {@link Condition} tree and collects all aggregate sub-expressions
 	 * found within it. Handles logical connectives ({@code AND}, {@code OR}, {@code XOR},
 	 * {@code NOT}), comparison operators ({@code >}, {@code >=}, {@code <}, {@code <=},
-	 * {@code =}, {@code <>}), {@code BETWEEN}, and arithmetic expressions ({@code +},
-	 * {@code -}, {@code *}, {@code /}) that may contain nested aggregates.
+	 * {@code =}, {@code <>}, {@code IS DISTINCT FROM}, {@code IS NOT DISTINCT FROM}),
+	 * {@code BETWEEN}, {@code IS NULL}, {@code IS NOT NULL}, {@code IN}, {@code NOT IN},
+	 * {@code LIKE}, {@code NOT LIKE}, {@code LIKE} (case-insensitive), {@code NOT LIKE}
+	 * (case-insensitive), and arithmetic expressions ({@code +}, {@code -}, {@code *},
+	 * {@code /}) that may contain nested aggregates.
 	 * @param condition the condition tree to walk
 	 * @return a list of all aggregate {@link Field} instances found (may contain
 	 * duplicates)
@@ -181,6 +184,48 @@ final class FieldMatcher {
 			collectAggregatesFromField(between.$arg1(), result);
 			collectAggregatesFromField(between.$arg2(), result);
 			collectAggregatesFromField(between.$arg3(), result);
+		}
+		else if (condition instanceof QOM.IsNull isNull) {
+			collectAggregatesFromField(isNull.$arg1(), result);
+		}
+		else if (condition instanceof QOM.IsNotNull isNotNull) {
+			collectAggregatesFromField(isNotNull.$arg1(), result);
+		}
+		else if (condition instanceof QOM.InList<?> inList) {
+			collectAggregatesFromField(inList.$field(), result);
+			for (var element : inList.$list()) {
+				collectAggregatesFromField(element, result);
+			}
+		}
+		else if (condition instanceof QOM.Like like) {
+			collectAggregatesFromField(like.$arg1(), result);
+			collectAggregatesFromField(like.$arg2(), result);
+		}
+		else if (condition instanceof QOM.NotLike notLike) {
+			collectAggregatesFromField(notLike.$arg1(), result);
+			collectAggregatesFromField(notLike.$arg2(), result);
+		}
+		else if (condition instanceof QOM.LikeIgnoreCase likeIc) {
+			collectAggregatesFromField(likeIc.$arg1(), result);
+			collectAggregatesFromField(likeIc.$arg2(), result);
+		}
+		else if (condition instanceof QOM.NotLikeIgnoreCase notLikeIc) {
+			collectAggregatesFromField(notLikeIc.$arg1(), result);
+			collectAggregatesFromField(notLikeIc.$arg2(), result);
+		}
+		else if (condition instanceof QOM.NotInList<?> notInList) {
+			collectAggregatesFromField(notInList.$field(), result);
+			for (var element : notInList.$list()) {
+				collectAggregatesFromField(element, result);
+			}
+		}
+		else if (condition instanceof QOM.IsDistinctFrom<?> isDistinctFrom) {
+			collectAggregatesFromField(isDistinctFrom.$arg1(), result);
+			collectAggregatesFromField(isDistinctFrom.$arg2(), result);
+		}
+		else if (condition instanceof QOM.IsNotDistinctFrom<?> isNotDistinctFrom) {
+			collectAggregatesFromField(isNotDistinctFrom.$arg1(), result);
+			collectAggregatesFromField(isNotDistinctFrom.$arg2(), result);
 		}
 	}
 

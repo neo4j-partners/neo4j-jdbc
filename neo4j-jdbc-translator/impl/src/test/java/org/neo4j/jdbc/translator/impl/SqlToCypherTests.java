@@ -991,6 +991,24 @@ class SqlToCypherTests {
 		assertThat(translator.translate(sql)).isEqualTo(cypher);
 	}
 
+	@ParameterizedTest
+	@CsvSource(delimiterString = "|",
+			textBlock = """
+					SELECT name FROM People p GROUP BY name HAVING count(*) > 5|MATCH (p:People) WITH p.name AS name, count(*) AS __having_col_0 WHERE __having_col_0 > 5 RETURN name
+					SELECT count(*) FROM People p HAVING count(*) > 5|MATCH (p:People) WITH count(*) AS __with_col_0 WHERE __with_col_0 > 5 RETURN __with_col_0
+					SELECT count(*) FROM People p GROUP BY name HAVING name = 'Alice'|MATCH (p:People) WITH count(*) AS __with_col_0, p.name AS __group_col_1 WHERE __group_col_1 = 'Alice' RETURN __with_col_0
+					SELECT name, count(*) AS cnt FROM People p GROUP BY name HAVING cnt > 5|MATCH (p:People) WITH p.name AS name, count(*) AS cnt WHERE cnt > 5 RETURN name, cnt
+					SELECT name FROM People p GROUP BY name HAVING count(*) > 5 AND max(age) > 50|MATCH (p:People) WITH p.name AS name, count(*) AS __having_col_0, max(p.age) AS __having_col_1 WHERE (__having_col_0 > 5 AND __having_col_1 > 50) RETURN name
+					SELECT name, sum(age) FROM People p GROUP BY name HAVING sum(age) > 100 AND count(*) > 2|MATCH (p:People) WITH p.name AS name, sum(p.age) AS __with_col_0, count(*) AS __having_col_1 WHERE (__with_col_0 > 100 AND __having_col_1 > 2) RETURN name, __with_col_0
+					SELECT name FROM People p GROUP BY name HAVING count(*) > 5 ORDER BY name|MATCH (p:People) WITH p.name AS name, count(*) AS __having_col_0 WHERE __having_col_0 > 5 RETURN name ORDER BY name
+					SELECT name FROM People p GROUP BY name HAVING count(DISTINCT age) > 3|MATCH (p:People) WITH p.name AS name, count(DISTINCT p.age) AS __having_col_0 WHERE __having_col_0 > 3 RETURN name
+					""")
+	void havingConditionTranslation(String sql, String cypher) {
+
+		var translator = SqlToCypher.defaultTranslator();
+		assertThat(translator.translate(sql)).isEqualTo(cypher);
+	}
+
 	private record SqlAndCypher(String name, String sql, String cypher) {
 		static SqlAndCypher of(String name, String sql, String cypher) {
 			return new SqlAndCypher(name, sql, cypher);

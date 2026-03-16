@@ -589,6 +589,21 @@ final class SqlToCypher implements Translator {
 				}
 			}
 
+			// Inject HAVING-only aggregates as hidden WITH columns.
+			// These are aggregates referenced in HAVING but not in SELECT — they need
+			// to be projected in the WITH so the post-WITH WHERE can reference them,
+			// but they are NOT added to returnExpressions (excluded from final RETURN).
+			if (havingCondition != null) {
+				for (var agg : FieldMatcher.collectAggregates(havingCondition)) {
+					if (registry.resolve(agg) == null) {
+						var expr = expression(agg);
+						var alias = "__having_col_" + aliasCounter.getAndIncrement();
+						withExpressions.add((IdentifiableElement) expr.as(alias));
+						registry.register(agg, alias);
+					}
+				}
+			}
+
 			// Set the registry before HAVING translation so that the unified
 			// interception in expression(Field<?>) can resolve aggregates and
 			// column references to their WITH aliases during condition()
@@ -598,7 +613,7 @@ final class SqlToCypher implements Translator {
 
 			OngoingReading afterWith;
 			if (havingCondition != null) {
-				afterWith = withStep.where(havingCondition(havingCondition, withExpressions));
+				afterWith = withStep.where(havingCondition(havingCondition));
 			}
 			else {
 				afterWith = withStep;
@@ -611,10 +626,11 @@ final class SqlToCypher implements Translator {
 
 		/**
 		 * Translates a HAVING condition to a Cypher condition that references the aliases
-		 * established in the WITH clause. Aggregate expressions in the HAVING are matched
-		 * to their corresponding aliases from the WITH.
+		 * established in the WITH clause. Aggregate expressions and column references in
+		 * the HAVING are resolved to their WITH aliases by the unified interception in
+		 * {@code expression(Field<?>)} via the active {@code aliasRegistry}.
 		 */
-		private Condition havingCondition(org.jooq.Condition c, List<IdentifiableElement> withExpressions) {
+		private Condition havingCondition(org.jooq.Condition c) {
 			return condition(c);
 		}
 
