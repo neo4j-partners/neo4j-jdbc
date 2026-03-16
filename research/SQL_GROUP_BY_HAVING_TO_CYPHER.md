@@ -1,8 +1,23 @@
 # GROUP BY and HAVING Implementation Summary
 
-The SQL-to-Cypher translator in `neo4j-jdbc-translator/impl` now supports GROUP BY semantics and HAVING clause translation through a six-phase implementation effort. The core challenge is that Cypher has no `GROUP BY` clause — grouping is implicit based on non-aggregated expressions in `RETURN`. For the common case (GROUP BY columns match SELECT columns), the translator continues to emit simple `MATCH ... RETURN` statements because Cypher's implicit grouping produces the correct result. When the GROUP BY contains columns absent from SELECT, or when a HAVING clause is present, the translator introduces a Cypher `WITH` clause to make grouping explicit and to support post-aggregation filtering.
+The SQL-to-Cypher translator in `neo4j-jdbc-translator/impl` now supports GROUP BY semantics, HAVING clause translation, and correct interaction of aggregation with ORDER BY, DISTINCT, LIMIT, OFFSET, WHERE, and JOIN — through a seven-phase implementation effort. The core challenge is that Cypher has no `GROUP BY` clause — grouping is implicit based on non-aggregated expressions in `RETURN`. For the common case (GROUP BY columns match SELECT columns), the translator continues to emit simple `MATCH ... RETURN` statements because Cypher's implicit grouping produces the correct result. When the GROUP BY contains columns absent from SELECT, or when a HAVING clause is present, the translator introduces a Cypher `WITH` clause to make grouping explicit and to support post-aggregation filtering.
 
-**What was implemented:**
+**New SQL functionality supported:**
+
+- **GROUP BY** — implicit grouping (columns match SELECT) and explicit WITH-clause generation (columns differ from SELECT)
+- **HAVING** — simple conditions, compound conditions (AND/OR), mixed SELECT/HAVING aggregates, HAVING without GROUP BY (implicit single-group), HAVING on non-aggregate GROUP BY columns
+- **ORDER BY on aggregate aliases** — `ORDER BY cnt` where `cnt` aliases `count(*)`, with correct alias resolution after WITH clauses
+- **ORDER BY after WITH clause** — unified alias resolution so ORDER BY references WITH aliases instead of de-scoped MATCH variables
+- **DISTINCT with GROUP BY/HAVING** — correct `RETURN DISTINCT` placement (never `WITH DISTINCT`)
+- **LIMIT and OFFSET with WITH clauses** — correct attachment to the final RETURN, not the WITH
+- **WHERE + GROUP BY combinations** — WHERE filters before aggregation, HAVING filters after
+- **JOIN + GROUP BY** — aggregation across relationships, with and without WITH clauses
+- **COUNT(DISTINCT)** in HAVING — the DISTINCT flag is preserved through the entire pipeline
+- **Compound HAVING with multiple aggregates** — each HAVING-only aggregate gets a hidden WITH column; aggregates already in SELECT are deduplicated
+- **Additional aggregate functions** — `percentileCont`, `percentileDisc`, `stDev` (stddev_samp), `stDevP` (stddev_pop) alongside existing `count`, `sum`, `min`, `max`, `avg`. All aggregation support applies to node properties only; aggregating over relationship properties remains Cypher-only (see [Remaining: Relationship Property Aggregation](#remaining-relationship-property-aggregation))
+- **Full clause combinations** — all of the above working together: WHERE + GROUP BY + HAVING + DISTINCT + ORDER BY + LIMIT + OFFSET
+
+**Implementation phases:**
 
 - **Phase 1:** 35 diagnostic tests documenting jOOQ's Query Object Model (QOM) behavior for GROUP BY, HAVING, ORDER BY, and DISTINCT — establishing ground truth before writing production code
 - **Phase 2:** `FieldMatcher` — a structural field equivalence matcher that compares jOOQ Field objects by type and content rather than string representation
@@ -10,6 +25,7 @@ The SQL-to-Cypher translator in `neo4j-jdbc-translator/impl` now supports GROUP 
 - **Phase 4:** WITH clause generation when GROUP BY columns differ from SELECT columns, replacing previously incorrect output with semantically correct Cypher
 - **Phase 5:** Unified alias resolution in `expression(Field<?>)` for ORDER BY after a WITH clause, plus error detection for de-scoped variables
 - **Phase 6:** HAVING condition translation with hidden WITH columns for HAVING-only aggregates, `collectAggregates()` utility for condition tree walking, and end-to-end test coverage for all HAVING patterns
+- **Phase 7:** DISTINCT, LIMIT, OFFSET hardening and full combination tests verifying correct interaction with WITH clauses
 
 **Key files:**
 
@@ -22,6 +38,7 @@ The SQL-to-Cypher translator in `neo4j-jdbc-translator/impl` now supports GROUP 
 | `FieldMatcherTests.java` | 23 matcher tests + collectAggregates tests |
 | `AliasRegistryTests.java` | 15 registry tests covering structural and name-based lookup |
 | `SqlToCypherTests.java` | End-to-end translator tests for aggregates, WITH generation, and HAVING |
+| `GroupByDocumentationTests.java` | Living documentation generator — verifies and regenerates the Example Translations section |
 
 **Test count:** 445 tests, 0 failures, 0 errors (425 after Phase 6, +20 in Phase 7).
 
@@ -29,9 +46,11 @@ The SQL-to-Cypher translator in `neo4j-jdbc-translator/impl` now supports GROUP 
 
 ## Example Translations
 
-This section shows representative SQL queries and the Cypher the translator now produces. These are drawn from the actual test suite and cover the major categories the implementation handles.
+> **Generated from actual translator output.** These examples are verified by
+> `GroupByDocumentationTests.java` — run `generateMarkdown()` to regenerate this section
+> from the current translator.
 
-### Simple GROUP BY (implicit grouping — no WITH needed)
+### Simple GROUP BY (implicit grouping)
 
 When every GROUP BY column also appears in SELECT, Cypher's implicit grouping produces the correct result and the translator emits a straightforward `MATCH ... RETURN`:
 
@@ -67,9 +86,7 @@ Previously, this query incorrectly produced `RETURN sum(p.age)` — a single tot
 Grouping works across relationships. When the GROUP BY column is in SELECT, no WITH is needed:
 
 ```sql
-SELECT c.name, count(*)
-FROM Customers c JOIN Orders o ON c.id = o.customer_id
-GROUP BY c.name
+SELECT c.name, count(*) FROM Customers c JOIN Orders o ON c.id = o.customer_id GROUP BY c.name
 ```
 ```cypher
 MATCH (c:Customers)<-[customer_id:CUSTOMER_ID]-(o:Orders) RETURN c.name, count(*)
@@ -78,15 +95,13 @@ MATCH (c:Customers)<-[customer_id:CUSTOMER_ID]-(o:Orders) RETURN c.name, count(*
 When the GROUP BY column is not in SELECT, a WITH clause is generated:
 
 ```sql
-SELECT count(*)
-FROM Customers c JOIN Orders o ON c.id = o.customer_id
-GROUP BY c.name
+SELECT count(*) FROM Customers c JOIN Orders o ON c.id = o.customer_id GROUP BY c.name
 ```
 ```cypher
 MATCH (c:Customers)<-[customer_id:CUSTOMER_ID]-(o:Orders) WITH count(*) AS __with_col_0, c.name AS __group_col_1 RETURN __with_col_0
 ```
 
-### HAVING — filtering aggregated results
+### HAVING (filtering aggregated results)
 
 HAVING conditions translate to a WHERE clause after the WITH. The aggregate is resolved to its WITH alias rather than re-invoked:
 
@@ -97,7 +112,7 @@ SELECT name, count(*) AS cnt FROM People p GROUP BY name HAVING cnt > 5
 MATCH (p:People) WITH p.name AS name, count(*) AS cnt WHERE cnt > 5 RETURN name, cnt
 ```
 
-### HAVING with aggregate not in SELECT (hidden column)
+### HAVING with aggregate not in SELECT
 
 When the HAVING references an aggregate that is not in the SELECT, it is injected as a hidden WITH column used only for filtering and excluded from the final RETURN:
 
@@ -116,11 +131,10 @@ Multiple HAVING-only aggregates each get their own hidden column:
 SELECT name FROM People p GROUP BY name HAVING count(*) > 5 AND max(age) > 50
 ```
 ```cypher
-MATCH (p:People) WITH p.name AS name, count(*) AS __having_col_0, max(p.age) AS __having_col_1
-WHERE (__having_col_0 > 5 AND __having_col_1 > 50) RETURN name
+MATCH (p:People) WITH p.name AS name, count(*) AS __having_col_0, max(p.age) AS __having_col_1 WHERE (__having_col_0 > 5 AND __having_col_1 > 50) RETURN name
 ```
 
-### Mixed: some aggregates in SELECT, some only in HAVING
+### Mixed aggregates (SELECT + HAVING)
 
 The translator deduplicates — aggregates already in SELECT are not injected again:
 
@@ -128,8 +142,7 @@ The translator deduplicates — aggregates already in SELECT are not injected ag
 SELECT name, sum(age) FROM People p GROUP BY name HAVING sum(age) > 100 AND count(*) > 2
 ```
 ```cypher
-MATCH (p:People) WITH p.name AS name, sum(p.age) AS __with_col_0, count(*) AS __having_col_1
-WHERE (__with_col_0 > 100 AND __having_col_1 > 2) RETURN name, __with_col_0
+MATCH (p:People) WITH p.name AS name, sum(p.age) AS __with_col_0, count(*) AS __having_col_1 WHERE (__with_col_0 > 100 AND __having_col_1 > 2) RETURN name, __with_col_0
 ```
 
 ### HAVING without GROUP BY
@@ -174,13 +187,24 @@ SELECT name FROM People p GROUP BY name HAVING count(DISTINCT age) > 3
 MATCH (p:People) WITH p.name AS name, count(DISTINCT p.age) AS __having_col_0 WHERE __having_col_0 > 3 RETURN name
 ```
 
-### HAVING on a non-aggregate GROUP BY column
+### HAVING on non-aggregate GROUP BY column
 
 ```sql
 SELECT count(*) FROM People p GROUP BY name HAVING name = 'Alice'
 ```
 ```cypher
 MATCH (p:People) WITH count(*) AS __with_col_0, p.name AS __group_col_1 WHERE __group_col_1 = 'Alice' RETURN __with_col_0
+```
+
+### HAVING on aggregate already in SELECT
+
+When the HAVING aggregate is already in SELECT, no hidden column is needed — the HAVING condition references the existing WITH alias:
+
+```sql
+SELECT sum(age) FROM People p GROUP BY name HAVING sum(age) > 100
+```
+```cypher
+MATCH (p:People) WITH sum(p.age) AS __with_col_0, p.name AS __group_col_1 WHERE __with_col_0 > 100 RETURN __with_col_0
 ```
 
 ---
@@ -622,6 +646,20 @@ WITH clause contains:
 Only the first category appears in the final RETURN statement.
 The other two participate in grouping/filtering but are invisible in results.
 ```
+
+---
+
+## Observations: Generated Cypher and Neo4j Best Practices
+
+The generated Cypher was reviewed against the [Neo4j Cypher deprecations page](https://neo4j.com/docs/cypher-manual/current/deprecations-additions-removals-compatibility/), the [Cypher aggregation docs](https://neo4j.com/docs/cypher-manual/current/functions/aggregating/), and the [ORDER BY docs](https://neo4j.com/docs/cypher-manual/5/clauses/order-by/). All generated Cypher uses modern syntax with no deprecated or removed features. Two observations are worth documenting:
+
+### 1. ORDER BY and NULL Handling
+
+Several generated queries include `ORDER BY` without explicit null filtering. Neo4j's default behavior is: ascending sorts place NULLs **last**, descending sorts place NULLs **first**. Neo4j does not currently support `NULLS FIRST`/`NULLS LAST` syntax. The Cypher best-practice recommendation is to filter with `WHERE prop IS NOT NULL` before sorting, but **adding that filter would change query semantics** — it would drop rows rather than just reorder them. Since this is a SQL-to-Cypher translator, it should faithfully translate the SQL semantics. If a SQL user wants null filtering, they write `WHERE col IS NOT NULL` in the SQL, and the translator already handles that correctly.
+
+### 2. Cypher 25 Subquery Grouping Change
+
+Cypher 25 (introduced with Neo4j 2025.06) changed how imported variables are handled inside `COLLECT`, `COUNT`, and `EXISTS` subquery expressions — they are now treated as constants rather than implicit grouping keys. This change does **not** affect the generated Cypher, which uses `WITH`/`RETURN` aggregation rather than subquery expressions. However, if the translator is extended to emit `COLLECT{}` or `COUNT{}` subqueries in the future, this behavioral change will need to be accounted for.
 
 ---
 
