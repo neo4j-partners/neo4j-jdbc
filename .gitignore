@@ -37,5 +37,5 @@ Neo4j-*-Created-*-*-*.txt
 .flattened-pom.xml
 
 ### Research notes ###
-research_logs/
+research_logs/*
 !research_logs/test.sh
