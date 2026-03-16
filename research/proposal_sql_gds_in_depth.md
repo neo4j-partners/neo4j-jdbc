@@ -37,7 +37,7 @@ The GDS branch produces an `OngoingReading` that the existing downstream code (R
 
 ## Why Not a Pure Early Return
 
-For Levels 1-2 (global PageRank, no residual WHERE, no ORDER BY), a pure early return would work: build the entire `CALL ... YIELD` Cypher and return it as a `ResultStatement`. But Level 3 adds `WHERE score > 0 ORDER BY score DESC LIMIT 25`, and Level 4 adds source node MATCH + collect before the CALL. If the GDS branch returned early, it would have to re-implement ORDER BY translation, LIMIT handling, and SELECT column resolution — duplicating logic that already exists in the downstream pipeline.
+For Levels 1-2 (global PageRank, no residual WHERE, no ORDER BY), a pure early return would work: build the entire `CALL ... YIELD` Cypher and return it as a `ResultStatement`. But Level 3 adds `WHERE score > 0 ORDER BY score DESC LIMIT 25`, and Level 4 adds source node MATCH + collect before the CALL. If the GDS branch returned early, it would have to re-implement ORDER BY translation, LIMIT handling, and SELECT column resolution, duplicating logic that already exists in the downstream pipeline.
 
 The more honest design is to follow the CBV pattern. `createOngoingReadingFromViews` (line 685) already solves a similar problem: it builds a CALL subquery, projects column aliases, applies residual WHERE predicates, and returns an `OngoingReading` that the downstream code chains with RETURN, ORDER BY, and LIMIT. The GDS branch would do the same: build the CALL + YIELD, set up column aliases for the YIELD columns, apply residual WHERE, and hand off to the shared pipeline.
 
@@ -63,7 +63,7 @@ WITH {a: n.title, c1: n.released} AS cbv1
 WHERE cbv1.a = 'The Matrix'
 ```
 
-When `expression()` resolves `cbv1.a`, it calls `resolveTableOrJoin("cbv1")`, which creates a node-like pattern element with symbolic name `cbv1`. Then `pc.property("a")` produces `cbv1.a` in Cypher. Because `cbv1` is actually a map variable (from the WITH clause), `cbv1.a` is valid Cypher map access, not a node property access. The translator does not know or care about the distinction — the field resolution produces the same syntax for both.
+When `expression()` resolves `cbv1.a`, it calls `resolveTableOrJoin("cbv1")`, which creates a node-like pattern element with symbolic name `cbv1`. Then `pc.property("a")` produces `cbv1.a` in Cypher. Because `cbv1` is actually a map variable (from the WITH clause), `cbv1.a` is valid Cypher map access, not a node property access. The translator does not know or care about the distinction; the field resolution produces the same syntax for both.
 
 The GDS branch follows the same pattern. After the CALL + YIELD, project the YIELD columns into a map aliased as the virtual table name:
 
@@ -107,7 +107,7 @@ YIELD nodeId, score
 RETURN nodeId, score
 ```
 
-The translator wraps this in a `CALL {}` subquery, projects the YIELD columns into a map, and hands off to the downstream pipeline. The source node logic is entirely within the raw Cypher string — constructed by `createOngoingReadingFromGds` from the configuration predicates — and does not interact with the jOOQ AST or the existing translation methods.
+The translator wraps this in a `CALL {}` subquery, projects the YIELD columns into a map, and hands off to the downstream pipeline. The source node logic is entirely within the raw Cypher string, constructed by `createOngoingReadingFromGds` from the configuration predicates, and does not interact with the jOOQ AST or the existing translation methods.
 
 This means the complexity of Level 4 is in **string construction**, not in **AST manipulation**. Building the MATCH + collect + CALL Cypher string from extracted configuration values is straightforward string templating. The integration with the rest of the translator uses the same `callRawCypher` → map projection → `OngoingReading` pattern that CBVs already validate.
 
@@ -144,7 +144,7 @@ The realistic failure modes are:
 
 3. **Residual predicate reconstruction.** If the pre-pass incorrectly reconstructs the remaining AND tree (dropping a predicate or duplicating one), the result filter would be wrong. Mitigation: the flatten-partition-reconstruct logic is simple list manipulation with straightforward unit tests. The GROUP BY `FieldMatcher` is more complex and was tested with 425+ cases; this would need fewer.
 
-4. **Raw Cypher string construction.** The MATCH + collect + CALL Cypher for Level 4 is built by string templating inside `createOngoingReadingFromGds`. A bug here (wrong parameter injection, missing collect(), malformed ANY() predicate) would produce invalid Cypher or wrong PageRank results. But this is isolated to the GDS branch and testable independently — the generated Cypher can be compared against the known-working hand-written Cypher in `Neo4jRepository.kt`.
+4. **Raw Cypher string construction.** The MATCH + collect + CALL Cypher for Level 4 is built by string templating inside `createOngoingReadingFromGds`. A bug here (wrong parameter injection, missing collect(), malformed ANY() predicate) would produce invalid Cypher or wrong PageRank results. But this is isolated to the GDS branch and testable independently; the generated Cypher can be compared against the known-working hand-written Cypher in `Neo4jRepository.kt`.
 
 None of these failure modes affect existing queries. A regression in the GDS branch produces wrong results for GDS virtual table queries only. Regular SQL translation, GROUP BY, HAVING, CBVs, and JOINs flow through separate code paths that the GDS branch does not modify.
 

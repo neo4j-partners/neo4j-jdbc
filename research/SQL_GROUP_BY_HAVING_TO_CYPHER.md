@@ -1,27 +1,27 @@
 # GROUP BY and HAVING Implementation Summary
 
-The SQL-to-Cypher translator in `neo4j-jdbc-translator/impl` now supports GROUP BY semantics, HAVING clause translation, and correct interaction of aggregation with ORDER BY, DISTINCT, LIMIT, OFFSET, WHERE, and JOIN — through a seven-phase implementation effort. The core challenge is that Cypher has no `GROUP BY` clause — grouping is implicit based on non-aggregated expressions in `RETURN`. For the common case (GROUP BY columns match SELECT columns), the translator continues to emit simple `MATCH ... RETURN` statements because Cypher's implicit grouping produces the correct result. When the GROUP BY contains columns absent from SELECT, or when a HAVING clause is present, the translator introduces a Cypher `WITH` clause to make grouping explicit and to support post-aggregation filtering.
+The SQL-to-Cypher translator in `neo4j-jdbc-translator/impl` now supports GROUP BY semantics, HAVING clause translation, and correct interaction of aggregation with ORDER BY, DISTINCT, LIMIT, OFFSET, WHERE, and JOIN, through a seven-phase implementation effort. The core challenge is that Cypher has no `GROUP BY` clause; grouping is implicit based on non-aggregated expressions in `RETURN`. For the common case (GROUP BY columns match SELECT columns), the translator continues to emit simple `MATCH ... RETURN` statements because Cypher's implicit grouping produces the correct result. When the GROUP BY contains columns absent from SELECT, or when a HAVING clause is present, the translator introduces a Cypher `WITH` clause to make grouping explicit and to support post-aggregation filtering.
 
 **New SQL functionality supported:**
 
-- **GROUP BY** — implicit grouping (columns match SELECT) and explicit WITH-clause generation (columns differ from SELECT)
-- **HAVING** — simple conditions, compound conditions (AND/OR), mixed SELECT/HAVING aggregates, HAVING without GROUP BY (implicit single-group), HAVING on non-aggregate GROUP BY columns
-- **ORDER BY on aggregate aliases** — `ORDER BY cnt` where `cnt` aliases `count(*)`, with correct alias resolution after WITH clauses
-- **ORDER BY after WITH clause** — unified alias resolution so ORDER BY references WITH aliases instead of de-scoped MATCH variables
-- **DISTINCT with GROUP BY/HAVING** — correct `RETURN DISTINCT` placement (never `WITH DISTINCT`)
-- **LIMIT and OFFSET with WITH clauses** — correct attachment to the final RETURN, not the WITH
-- **WHERE + GROUP BY combinations** — WHERE filters before aggregation, HAVING filters after
-- **JOIN + GROUP BY** — aggregation across relationships, with and without WITH clauses
-- **COUNT(DISTINCT)** in HAVING — the DISTINCT flag is preserved through the entire pipeline
-- **Compound HAVING with multiple aggregates** — each HAVING-only aggregate gets a hidden WITH column; aggregates already in SELECT are deduplicated
-- **Additional aggregate functions** — `percentileCont`, `percentileDisc`, `stDev` (stddev_samp), `stDevP` (stddev_pop) alongside existing `count`, `sum`, `min`, `max`, `avg`. All aggregation support applies to node properties only; aggregating over relationship properties remains Cypher-only (see [Remaining: Relationship Property Aggregation](#remaining-relationship-property-aggregation))
-- **Full clause combinations** — all of the above working together: WHERE + GROUP BY + HAVING + DISTINCT + ORDER BY + LIMIT + OFFSET
+- **GROUP BY**: implicit grouping (columns match SELECT) and explicit WITH-clause generation (columns differ from SELECT)
+- **HAVING**: simple conditions, compound conditions (AND/OR), mixed SELECT/HAVING aggregates, HAVING without GROUP BY (implicit single-group), HAVING on non-aggregate GROUP BY columns
+- **ORDER BY on aggregate aliases**: `ORDER BY cnt` where `cnt` aliases `count(*)`, with correct alias resolution after WITH clauses
+- **ORDER BY after WITH clause**: unified alias resolution so ORDER BY references WITH aliases instead of de-scoped MATCH variables
+- **DISTINCT with GROUP BY/HAVING**: correct `RETURN DISTINCT` placement (never `WITH DISTINCT`)
+- **LIMIT and OFFSET with WITH clauses**: correct attachment to the final RETURN, not the WITH
+- **WHERE + GROUP BY combinations**: WHERE filters before aggregation, HAVING filters after
+- **JOIN + GROUP BY**: aggregation across relationships, with and without WITH clauses
+- **COUNT(DISTINCT)** in HAVING: the DISTINCT flag is preserved through the entire pipeline
+- **Compound HAVING with multiple aggregates**: each HAVING-only aggregate gets a hidden WITH column; aggregates already in SELECT are deduplicated
+- **Additional aggregate functions**: `percentileCont`, `percentileDisc`, `stDev` (stddev_samp), `stDevP` (stddev_pop) alongside existing `count`, `sum`, `min`, `max`, `avg`. All aggregation support applies to node properties only; aggregating over relationship properties remains Cypher-only (see [Remaining: Relationship Property Aggregation](#remaining-relationship-property-aggregation))
+- **Full clause combinations**: all of the above working together: WHERE + GROUP BY + HAVING + DISTINCT + ORDER BY + LIMIT + OFFSET
 
 **Implementation phases:**
 
-- **Phase 1:** 35 diagnostic tests documenting jOOQ's Query Object Model (QOM) behavior for GROUP BY, HAVING, ORDER BY, and DISTINCT — establishing ground truth before writing production code
-- **Phase 2:** `FieldMatcher` — a structural field equivalence matcher that compares jOOQ Field objects by type and content rather than string representation
-- **Phase 3:** `AliasRegistry` — a two-mode expression-to-alias registry supporting both structural matching (for aggregate expressions) and name-based lookup (for unresolved alias references)
+- **Phase 1:** 35 diagnostic tests documenting jOOQ's Query Object Model (QOM) behavior for GROUP BY, HAVING, ORDER BY, and DISTINCT, establishing ground truth before writing production code
+- **Phase 2:** `FieldMatcher`, a structural field equivalence matcher that compares jOOQ Field objects by type and content rather than string representation
+- **Phase 3:** `AliasRegistry`, a two-mode expression-to-alias registry supporting both structural matching (for aggregate expressions) and name-based lookup (for unresolved alias references)
 - **Phase 4:** WITH clause generation when GROUP BY columns differ from SELECT columns, replacing previously incorrect output with semantically correct Cypher
 - **Phase 5:** Unified alias resolution in `expression(Field<?>)` for ORDER BY after a WITH clause, plus error detection for de-scoped variables
 - **Phase 6:** HAVING condition translation with hidden WITH columns for HAVING-only aggregates, `collectAggregates()` utility for condition tree walking, and end-to-end test coverage for all HAVING patterns
@@ -31,14 +31,14 @@ The SQL-to-Cypher translator in `neo4j-jdbc-translator/impl` now supports GROUP 
 
 | File | Purpose |
 |------|---------|
-| `SqlToCypher.java` | Core translator — `statement(Select<?>)`, `buildWithClause()`, `havingCondition()`, registry interception in `expression(Field<?>)` |
+| `SqlToCypher.java` | Core translator: `statement(Select<?>)`, `buildWithClause()`, `havingCondition()`, registry interception in `expression(Field<?>)` |
 | `FieldMatcher.java` | Structural field equivalence, `isAggregate()` type guard, `collectAggregates()` condition walker |
 | `AliasRegistry.java` | Two-mode alias registry (structural + name-based lookup) |
 | `JooqQomDiagnosticTests.java` | 35 diagnostic tests documenting jOOQ QOM behavior |
 | `FieldMatcherTests.java` | 23 matcher tests + collectAggregates tests |
 | `AliasRegistryTests.java` | 15 registry tests covering structural and name-based lookup |
 | `SqlToCypherTests.java` | End-to-end translator tests for aggregates, WITH generation, and HAVING |
-| `GroupByDocumentationTests.java` | Living documentation generator — verifies and regenerates the Example Translations section |
+| `GroupByDocumentationTests.java` | Living documentation generator; verifies and regenerates the Example Translations section |
 
 **Test count:** 445 tests, 0 failures, 0 errors (425 after Phase 6, +20 in Phase 7).
 
@@ -47,7 +47,7 @@ The SQL-to-Cypher translator in `neo4j-jdbc-translator/impl` now supports GROUP 
 ## Example Translations
 
 > **Generated from actual translator output.** These examples are verified by
-> `GroupByDocumentationTests.java` — run `generateMarkdown()` to regenerate this section
+> `GroupByDocumentationTests.java`. Run `generateMarkdown()` to regenerate this section
 > from the current translator.
 
 ### Simple GROUP BY (implicit grouping)
@@ -79,7 +79,7 @@ SELECT sum(age) FROM People p GROUP BY name
 MATCH (p:People) WITH sum(p.age) AS __with_col_0, p.name AS __group_col_1 RETURN __with_col_0
 ```
 
-Previously, this query incorrectly produced `RETURN sum(p.age)` — a single total sum across all rows. The corrected output groups by name and returns one sum per name.
+Previously, this query incorrectly produced `RETURN sum(p.age)` (a single total sum across all rows). The corrected output groups by name and returns one sum per name.
 
 ### JOIN with GROUP BY
 
@@ -136,7 +136,7 @@ MATCH (p:People) WITH p.name AS name, count(*) AS __having_col_0, max(p.age) AS 
 
 ### Mixed aggregates (SELECT + HAVING)
 
-The translator deduplicates — aggregates already in SELECT are not injected again:
+The translator deduplicates: aggregates already in SELECT are not injected again:
 
 ```sql
 SELECT name, sum(age) FROM People p GROUP BY name HAVING sum(age) > 100 AND count(*) > 2
@@ -198,7 +198,7 @@ MATCH (p:People) WITH count(*) AS __with_col_0, p.name AS __group_col_1 WHERE __
 
 ### HAVING on aggregate already in SELECT
 
-When the HAVING aggregate is already in SELECT, no hidden column is needed — the HAVING condition references the existing WITH alias:
+When the HAVING aggregate is already in SELECT, no hidden column is needed; the HAVING condition references the existing WITH alias:
 
 ```sql
 SELECT sum(age) FROM People p GROUP BY name HAVING sum(age) > 100
@@ -217,23 +217,23 @@ MATCH (p:People) WITH sum(p.age) AS __with_col_0, p.name AS __group_col_1 WHERE 
 
 ### Why this was needed
 
-The entire implementation depends on reading jOOQ's internal AST (the Query Object Model) and translating its nodes into Cypher-DSL calls. Before writing any production code, we needed to know exactly what types jOOQ produces for each SQL construct. Early assumptions — such as `count(*)` producing an `Asterisk` instance, or `HAVING cnt > 5` resolving the alias to the underlying aggregate — turned out to be wrong. Building the structural matcher or alias registry on incorrect assumptions would have required expensive rework. By writing 35 diagnostic tests first, every design decision in Phases 2-6 was grounded in verified behavior rather than documentation or guesswork. These tests also serve as regression guards: if a future jOOQ upgrade changes how it represents these constructs, the diagnostic tests will catch it immediately.
+The entire implementation depends on reading jOOQ's internal AST (the Query Object Model) and translating its nodes into Cypher-DSL calls. Before writing any production code, we needed to know exactly what types jOOQ produces for each SQL construct. Early assumptions (such as `count(*)` producing an `Asterisk` instance, or `HAVING cnt > 5` resolving the alias to the underlying aggregate) turned out to be wrong. Building the structural matcher or alias registry on incorrect assumptions would have required expensive rework. By writing 35 diagnostic tests first, every design decision in Phases 2-6 was grounded in verified behavior rather than documentation or guesswork. These tests also serve as regression guards: if a future jOOQ upgrade changes how it represents these constructs, the diagnostic tests will catch it immediately.
 
 This phase produced no production code changes. Instead, it established critical findings that shaped all subsequent design decisions:
 
-1. **jOOQ represents `count(*)` asterisk as `SQLField`, not `Asterisk`** — the structural matcher must detect the asterisk via `"*".equals(field.toString())`, not `instanceof Asterisk`.
+1. **jOOQ represents `count(*)` asterisk as `SQLField`, not `Asterisk`**. The structural matcher must detect the asterisk via `"*".equals(field.toString())`, not `instanceof Asterisk`.
 
-2. **jOOQ does NOT resolve HAVING alias references to aggregates** — `HAVING cnt > 5` (where `cnt` aliases `count(*)`) keeps `cnt` as an unresolved plain field reference, not a `QOM.Count` node. This drove the requirement for name-based lookup in the alias registry.
+2. **jOOQ does NOT resolve HAVING alias references to aggregates**. `HAVING cnt > 5` (where `cnt` aliases `count(*)`) keeps `cnt` as an unresolved plain field reference, not a `QOM.Count` node. This drove the requirement for name-based lookup in the alias registry.
 
-3. **jOOQ does NOT resolve ORDER BY alias references to aggregates** — same behavior as HAVING. `ORDER BY cnt` produces a plain field reference.
+3. **jOOQ does NOT resolve ORDER BY alias references to aggregates**. Same behavior as HAVING. `ORDER BY cnt` produces a plain field reference.
 
-4. **jOOQ preserves aggregate structure in ORDER BY function form** — `ORDER BY count(*)` produces a `QOM.Count` node, so the structural matcher handles it directly.
+4. **jOOQ preserves aggregate structure in ORDER BY function form**. `ORDER BY count(*)` produces a `QOM.Count` node, so the structural matcher handles it directly.
 
-5. **jOOQ does NOT resolve GROUP BY ordinals** — `GROUP BY 1` produces a field with name `"1"`, not the resolved first SELECT column. Ordinal GROUP BY support is out of scope.
+5. **jOOQ does NOT resolve GROUP BY ordinals**. `GROUP BY 1` produces a field with name `"1"`, not the resolved first SELECT column. Ordinal GROUP BY support is out of scope.
 
-6. **HAVING arithmetic preserves aggregate nodes** — `HAVING max(salary) > 2 * avg(salary)` produces individually matchable aggregate sub-expressions within the arithmetic tree.
+6. **HAVING arithmetic preserves aggregate nodes**. `HAVING max(salary) > 2 * avg(salary)` produces individually matchable aggregate sub-expressions within the arithmetic tree.
 
-7. **DISTINCT is independent of GROUP BY and HAVING** — the `$distinct()` flag does not affect other clause accessors.
+7. **DISTINCT is independent of GROUP BY and HAVING**. The `$distinct()` flag does not affect other clause accessors.
 
 ---
 
@@ -246,14 +246,14 @@ This phase produced no production code changes. Instead, it established critical
 
 ### Why this was needed
 
-The translator needs to answer a simple question in multiple contexts: "are these two jOOQ Field objects referring to the same thing?" For example, is the `count(*)` in a HAVING clause the same as the `count(*) AS cnt` in the SELECT? Is the `name` in GROUP BY the same as the `p.name` in SELECT? String comparison (`toString()`) is fragile — it depends on jOOQ's formatting being stable across versions and contexts. Structural matching compares the actual QOM node types and their children recursively, which is deterministic and version-independent. This matcher is the foundation that the alias registry (Phase 3), GROUP BY field comparison (Phase 4), HAVING resolution (Phase 6), and ORDER BY resolution (Phase 5) all depend on. By building and testing it in isolation first, we validated the approach before it could contaminate downstream phases.
+The translator needs to answer a simple question in multiple contexts: "are these two jOOQ Field objects referring to the same thing?" For example, is the `count(*)` in a HAVING clause the same as the `count(*) AS cnt` in the SELECT? Is the `name` in GROUP BY the same as the `p.name` in SELECT? String comparison (`toString()`) is fragile; it depends on jOOQ's formatting being stable across versions and contexts. Structural matching compares the actual QOM node types and their children recursively, which is deterministic and version-independent. This matcher is the foundation that the alias registry (Phase 3), GROUP BY field comparison (Phase 4), HAVING resolution (Phase 6), and ORDER BY resolution (Phase 5) all depend on. By building and testing it in isolation first, we validated the approach before it could contaminate downstream phases.
 
 The matcher handles four specific cases:
 
-1. **Alias unwrapping** — strips `QOM.FieldAlias` wrappers recursively before comparison
-2. **Aggregate function matching** — compares by QOM type and inner field arguments (with `$distinct()` flag check on Count)
-3. **Simple column references** — case-insensitive name comparison with table qualifier when both are qualified
-4. **Fallback** — returns false for unrecognized types
+1. **Alias unwrapping**: strips `QOM.FieldAlias` wrappers recursively before comparison
+2. **Aggregate function matching**: compares by QOM type and inner field arguments (with `$distinct()` flag check on Count)
+3. **Simple column references**: case-insensitive name comparison with table qualifier when both are qualified
+4. **Fallback**: returns false for unrecognized types
 
 ### Sample Test Scenarios
 
@@ -276,11 +276,11 @@ fieldsMatch(name [unqualified], p.name)  → true   (pragmatic single-table matc
 
 ### Why this was needed
 
-When the translator generates a WITH clause, every expression gets an alias (`count(*) AS cnt` or `sum(p.age) AS __with_col_0`). Later, when translating HAVING conditions or ORDER BY clauses, the translator must emit references to those aliases — not re-translate the original expressions. Re-emitting `count(*)` after a WITH would attempt to re-aggregate already-aggregated rows, producing wrong results. The registry maps each original expression to its WITH alias so downstream translation can look up the correct reference. Phase 1 finding #2 revealed that jOOQ keeps alias references (like `HAVING cnt > 5`) as unresolved plain field names rather than resolving them to the underlying aggregate. This meant the registry needed two lookup modes: structural matching for function-form references (`HAVING count(*) > 5`) and name-based matching for alias-form references (`HAVING cnt > 5`).
+When the translator generates a WITH clause, every expression gets an alias (`count(*) AS cnt` or `sum(p.age) AS __with_col_0`). Later, when translating HAVING conditions or ORDER BY clauses, the translator must emit references to those aliases, not re-translate the original expressions. Re-emitting `count(*)` after a WITH would attempt to re-aggregate already-aggregated rows, producing wrong results. The registry maps each original expression to its WITH alias so downstream translation can look up the correct reference. Phase 1 finding #2 revealed that jOOQ keeps alias references (like `HAVING cnt > 5`) as unresolved plain field names rather than resolving them to the underlying aggregate. This meant the registry needed two lookup modes: structural matching for function-form references (`HAVING count(*) > 5`) and name-based matching for alias-form references (`HAVING cnt > 5`).
 
 Two-mode resolution:
-1. **Structural matching** — uses `FieldMatcher.fieldsMatch()` to find a matching registered aggregate (handles `HAVING count(*) > 5`)
-2. **Name-based fallback** — checks if the field's name matches any registered alias (handles `HAVING cnt > 5` where jOOQ keeps `cnt` unresolved)
+1. **Structural matching**: uses `FieldMatcher.fieldsMatch()` to find a matching registered aggregate (handles `HAVING count(*) > 5`)
+2. **Name-based fallback**: checks if the field's name matches any registered alias (handles `HAVING cnt > 5` where jOOQ keeps `cnt` unresolved)
 
 ---
 
@@ -290,7 +290,7 @@ Two-mode resolution:
 
 ### Why this was needed
 
-The translator was producing semantically wrong Cypher for an entire class of queries. When a GROUP BY column does not appear in the SELECT list, Cypher's implicit grouping has no way to know about it — the grouping key is simply absent from the RETURN. For example, `SELECT sum(age) FROM People GROUP BY name` should return one sum per name (multiple rows), but the translator was emitting `RETURN sum(p.age)` which collapses everything into a single total (one row). The only way to make the grouping explicit in Cypher is to introduce a WITH clause that includes the grouping column alongside the aggregates. This phase wired the FieldMatcher and AliasRegistry from Phases 2-3 into the translator's main SELECT path, replacing the fragile bare-name field comparison with structural matching, and generating WITH clauses when needed.
+The translator was producing semantically wrong Cypher for an entire class of queries. When a GROUP BY column does not appear in the SELECT list, Cypher's implicit grouping has no way to know about it; the grouping key is simply absent from the RETURN. For example, `SELECT sum(age) FROM People GROUP BY name` should return one sum per name (multiple rows), but the translator was emitting `RETURN sum(p.age)` which collapses everything into a single total (one row). The only way to make the grouping explicit in Cypher is to introduce a WITH clause that includes the grouping column alongside the aggregates. This phase wired the FieldMatcher and AliasRegistry from Phases 2-3 into the translator's main SELECT path, replacing the fragile bare-name field comparison with structural matching, and generating WITH clauses when needed.
 
 **Key change:** Previously, `SELECT sum(age) FROM People GROUP BY name` incorrectly produced `RETURN sum(p.age)` (a single total sum). After Phase 4, it correctly produces a WITH clause that groups by name and returns one sum per name.
 
@@ -379,9 +379,9 @@ MATCH (c:Customers)<-[customer_id:CUSTOMER_ID]-(o:Orders) WITH count(*) AS __wit
 
 ### Why this was needed
 
-In Cypher, a WITH clause completely replaces the current scope — variables from the preceding MATCH are no longer accessible unless they are explicitly projected in the WITH. Before Phase 5, the ORDER BY translation resolved fields against the original table scope (the MATCH variables), which worked fine when there was no WITH. But after Phase 4 introduced WITH clauses, ORDER BY would emit references to variables that were no longer in scope (e.g., `ORDER BY p.name` when `p` was replaced by `__group_col_1` in the WITH). This produced Cypher that Neo4j would reject at runtime with error 42N44 (inaccessible variable). Phase 5 added a unified interception point in `expression(Field<?>)` that checks the alias registry before falling through to normal translation. This same interception serves both ORDER BY and HAVING (Phase 6), avoiding duplicated resolution logic. It also added explicit error detection so that ORDER BY on a de-scoped variable throws a clear error at translation time rather than producing invalid Cypher that fails at runtime.
+In Cypher, a WITH clause completely replaces the current scope; variables from the preceding MATCH are no longer accessible unless they are explicitly projected in the WITH. Before Phase 5, the ORDER BY translation resolved fields against the original table scope (the MATCH variables), which worked fine when there was no WITH. But after Phase 4 introduced WITH clauses, ORDER BY would emit references to variables that were no longer in scope (e.g., `ORDER BY p.name` when `p` was replaced by `__group_col_1` in the WITH). This produced Cypher that Neo4j would reject at runtime with error 42N44 (inaccessible variable). Phase 5 added a unified interception point in `expression(Field<?>)` that checks the alias registry before falling through to normal translation. This same interception serves both ORDER BY and HAVING (Phase 6), avoiding duplicated resolution logic. It also added explicit error detection so that ORDER BY on a de-scoped variable throws a clear error at translation time rather than producing invalid Cypher that fails at runtime.
 
-After a WITH clause, the original MATCH scope is gone in Cypher — only WITH aliases remain accessible. Phase 5 added:
+After a WITH clause, the original MATCH scope is gone in Cypher, and only WITH aliases remain accessible. Phase 5 added:
 
 1. **Unified registry interception** at the top of `expression(Field<?>)` that resolves fields through the alias registry when active
 2. **Error detection** in `expression(SortField<?>)` that throws when ORDER BY references a field not in the WITH scope
@@ -424,15 +424,15 @@ MATCH (p:People) RETURN p.name AS name, max(p.age) ORDER BY p.name DESC
 
 ### Why this was needed
 
-HAVING clauses were the primary gap identified in the original proposal. Before this phase, the translator silently dropped every HAVING condition — post-aggregation filters never reached the Cypher output, so every group was returned regardless of whether it satisfied the HAVING predicate. This is not a subtle edge case; `HAVING count(*) > 5` is one of the most common SQL patterns for filtering aggregated results. Cypher has no HAVING keyword — the equivalent is a WHERE clause placed after a WITH that performs the aggregation. The translation requires three capabilities that didn't exist before: (1) detecting which aggregates in the HAVING are not already in the SELECT and injecting them as hidden WITH columns for filtering, (2) walking the HAVING condition tree to find all aggregate sub-expressions (which may be nested inside arithmetic like `max(salary) > 2 * avg(salary)`), and (3) resolving each aggregate reference to its WITH alias so the WHERE references aliases instead of re-invoking aggregate functions. All of this was made possible by the infrastructure from Phases 2-5 — the structural matcher, the two-mode registry, and the unified interception in `expression(Field<?>)`.
+HAVING clauses were the primary gap identified in the original proposal. Before this phase, the translator silently dropped every HAVING condition, so post-aggregation filters never reached the Cypher output, so every group was returned regardless of whether it satisfied the HAVING predicate. This is not a subtle edge case; `HAVING count(*) > 5` is one of the most common SQL patterns for filtering aggregated results. Cypher has no HAVING keyword; the equivalent is a WHERE clause placed after a WITH that performs the aggregation. The translation requires three capabilities that didn't exist before: (1) detecting which aggregates in the HAVING are not already in the SELECT and injecting them as hidden WITH columns for filtering, (2) walking the HAVING condition tree to find all aggregate sub-expressions (which may be nested inside arithmetic like `max(salary) > 2 * avg(salary)`), and (3) resolving each aggregate reference to its WITH alias so the WHERE references aliases instead of re-invoking aggregate functions. All of this was made possible by the infrastructure from Phases 2-5: the structural matcher, the two-mode registry, and the unified interception in `expression(Field<?>)`.
 
 This is the most complex phase, building on all previous infrastructure. Key components:
 
-1. **`collectAggregates(Condition)`** — recursively walks the HAVING condition tree and extracts all aggregate sub-expressions. Handles all jOOQ condition types: `And`, `Or`, `Xor`, `Not`, comparison operators, `Between`, `InList`, `NotInList`, `IsNull`, `IsNotNull`, `Like`, `NotLike`, `LikeIgnoreCase`, `NotLikeIgnoreCase`, `IsDistinctFrom`, `IsNotDistinctFrom`.
+1. **`collectAggregates(Condition)`**: recursively walks the HAVING condition tree and extracts all aggregate sub-expressions. Handles all jOOQ condition types: `And`, `Or`, `Xor`, `Not`, comparison operators, `Between`, `InList`, `NotInList`, `IsNull`, `IsNotNull`, `Like`, `NotLike`, `LikeIgnoreCase`, `NotLikeIgnoreCase`, `IsDistinctFrom`, `IsNotDistinctFrom`.
 
-2. **Hidden column injection** — when a HAVING clause references an aggregate not in SELECT, that aggregate is added to the WITH clause with a synthetic `__having_col_N` alias. It participates in the WHERE filter but is excluded from the final RETURN.
+2. **Hidden column injection**: when a HAVING clause references an aggregate not in SELECT, that aggregate is added to the WITH clause with a synthetic `__having_col_N` alias. It participates in the WHERE filter but is excluded from the final RETURN.
 
-3. **Alias resolution** — the unified interception in `expression(Field<?>)` resolves HAVING aggregates to their WITH aliases, whether referenced by function form (`HAVING count(*) > 5`) or by SQL alias (`HAVING cnt > 5`).
+3. **Alias resolution**: the unified interception in `expression(Field<?>)` resolves HAVING aggregates to their WITH aliases, whether referenced by function form (`HAVING count(*) > 5`) or by SQL alias (`HAVING cnt > 5`).
 
 ### SQL-to-Cypher Examples: Simple HAVING
 
@@ -476,7 +476,7 @@ SELECT name, sum(age) FROM People p GROUP BY name HAVING sum(age) > 100 AND coun
 MATCH (p:People) WITH p.name AS name, sum(p.age) AS __with_col_0, count(*) AS __having_col_1 WHERE (__with_col_0 > 100 AND __having_col_1 > 2) RETURN name, __with_col_0
 ```
 
-`sum(age)` is in SELECT (gets `__with_col_0`, appears in RETURN). `count(*)` is HAVING-only (gets `__having_col_1`, excluded from RETURN). The registry deduplicates `sum(age)` — it is not injected twice.
+`sum(age)` is in SELECT (gets `__with_col_0`, appears in RETURN). `count(*)` is HAVING-only (gets `__having_col_1`, excluded from RETURN). The registry deduplicates `sum(age)`, so it is not injected twice.
 
 ### SQL-to-Cypher Examples: HAVING with Non-Aggregate Condition
 
@@ -509,7 +509,7 @@ SELECT name FROM People p GROUP BY name HAVING count(*) > 5 ORDER BY name
 MATCH (p:People) WITH p.name AS name, count(*) AS __having_col_0 WHERE __having_col_0 > 5 RETURN name ORDER BY name
 ```
 
-Both HAVING and ORDER BY work together — HAVING uses the hidden column for filtering, ORDER BY references the RETURN alias.
+Both HAVING and ORDER BY work together. HAVING uses the hidden column for filtering, ORDER BY references the RETURN alias.
 
 ### SQL-to-Cypher Examples: HAVING with COUNT(DISTINCT)
 
@@ -531,7 +531,7 @@ SELECT sum(age) FROM People p GROUP BY name HAVING sum(age) > 100
 MATCH (p:People) WITH sum(p.age) AS __with_col_0, p.name AS __group_col_1 WHERE __with_col_0 > 100 RETURN __with_col_0
 ```
 
-When the HAVING aggregate is already in SELECT, no hidden column is needed — the HAVING condition references the existing WITH alias.
+When the HAVING aggregate is already in SELECT, no hidden column is needed; the HAVING condition references the existing WITH alias.
 
 ---
 
@@ -541,7 +541,7 @@ When the HAVING aggregate is already in SELECT, no hidden column is needed — t
 
 ### Why this was needed
 
-Phases 1-6 built the core GROUP BY/HAVING machinery but didn't explicitly verify how DISTINCT, LIMIT, and OFFSET behave when a WITH clause is present. These clauses must attach to the final `RETURN`, never to the `WITH`. A subtle bug could produce `WITH DISTINCT` (deduplicating before aggregation) instead of `RETURN DISTINCT` (deduplicating after), or apply `LIMIT` to the WITH instead of the RETURN. Phase 7 was a verification and hardening pass — no production logic changes were needed, confirming that the Phase 4-6 implementation was already correct.
+Phases 1-6 built the core GROUP BY/HAVING machinery but didn't explicitly verify how DISTINCT, LIMIT, and OFFSET behave when a WITH clause is present. These clauses must attach to the final `RETURN`, never to the `WITH`. A subtle bug could produce `WITH DISTINCT` (deduplicating before aggregation) instead of `RETURN DISTINCT` (deduplicating after), or apply `LIMIT` to the WITH instead of the RETURN. Phase 7 was a verification and hardening pass. No production logic changes were needed, confirming that the Phase 4-6 implementation was already correct.
 
 ### What was implemented
 
@@ -551,27 +551,27 @@ Phases 1-6 built the core GROUP BY/HAVING machinery but didn't explicitly verify
 
 **Test additions (13 new test cases):**
 
-1. **DISTINCT + WITH path tests (3 tests)** — `distinctWithGroupByAndHaving` parameterized test verifying `RETURN DISTINCT` placement:
+1. **DISTINCT + WITH path tests (3 tests)**: `distinctWithGroupByAndHaving` parameterized test verifying `RETURN DISTINCT` placement:
    - `SELECT DISTINCT name, count(*) ... GROUP BY name` → `RETURN DISTINCT` (no WITH needed)
    - `SELECT DISTINCT count(*) ... GROUP BY name` → WITH path, `RETURN DISTINCT`
    - `SELECT DISTINCT name ... GROUP BY name HAVING count(*) > 5` → HAVING path, `RETURN DISTINCT`
 
-2. **LIMIT/OFFSET + WITH path tests (3 tests)** — `limitAndOffsetWithWithClause` parameterized test:
+2. **LIMIT/OFFSET + WITH path tests (3 tests)**: `limitAndOffsetWithWithClause` parameterized test:
    - `GROUP BY ... LIMIT` with WITH → LIMIT after RETURN
    - `GROUP BY ... HAVING ... LIMIT` → LIMIT after RETURN
    - `GROUP BY ... HAVING ... ORDER BY ... LIMIT ... OFFSET` → SKIP before LIMIT, both after RETURN
 
 3. **Full combination tests (3 tests):**
-   - `fullGroupByCombination` — all clauses: GROUP BY + HAVING + DISTINCT + ORDER BY + LIMIT + OFFSET
-   - `fullGroupByCombinationWithGroupByMismatch` — GROUP BY-only column with HAVING, DISTINCT, ORDER BY, LIMIT
-   - `fullGroupByCombinationWithWhereAndMultipleAggregates` — WHERE + multiple HAVING aggregates + DISTINCT + ORDER BY + LIMIT + OFFSET
+   - `fullGroupByCombination`: all clauses: GROUP BY + HAVING + DISTINCT + ORDER BY + LIMIT + OFFSET
+   - `fullGroupByCombinationWithGroupByMismatch`: GROUP BY-only column with HAVING, DISTINCT, ORDER BY, LIMIT
+   - `fullGroupByCombinationWithWhereAndMultipleAggregates`: WHERE + multiple HAVING aggregates + DISTINCT + ORDER BY + LIMIT + OFFSET
 
-4. **WHERE + GROUP BY path tests (3 tests)** — `whereWithGroupByAndOrderByPaths` parameterized test:
+4. **WHERE + GROUP BY path tests (3 tests)**: `whereWithGroupByAndOrderByPaths` parameterized test:
    - WHERE with GROUP BY (simple path, no WITH)
    - WHERE with GROUP BY (WITH path)
    - ORDER BY aggregate alias without GROUP BY
 
-5. **Registry cleanup test (1 test)** — `registryDoesNotLeakBetweenTranslations`: translates a HAVING query then a simple query, verifying no WITH or alias artifacts leak to the second translation.
+5. **Registry cleanup test (1 test)**: `registryDoesNotLeakBetweenTranslations`: translates a HAVING query then a simple query, verifying no WITH or alias artifacts leak to the second translation.
 
 ### SQL-to-Cypher Examples: Full Combination
 
@@ -655,11 +655,11 @@ The generated Cypher was reviewed against the [Neo4j Cypher deprecations page](h
 
 ### 1. ORDER BY and NULL Handling
 
-Several generated queries include `ORDER BY` without explicit null filtering. Neo4j's default behavior is: ascending sorts place NULLs **last**, descending sorts place NULLs **first**. Neo4j does not currently support `NULLS FIRST`/`NULLS LAST` syntax. The Cypher best-practice recommendation is to filter with `WHERE prop IS NOT NULL` before sorting, but **adding that filter would change query semantics** — it would drop rows rather than just reorder them. Since this is a SQL-to-Cypher translator, it should faithfully translate the SQL semantics. If a SQL user wants null filtering, they write `WHERE col IS NOT NULL` in the SQL, and the translator already handles that correctly.
+Several generated queries include `ORDER BY` without explicit null filtering. Neo4j's default behavior is: ascending sorts place NULLs **last**, descending sorts place NULLs **first**. Neo4j does not currently support `NULLS FIRST`/`NULLS LAST` syntax. The Cypher best-practice recommendation is to filter with `WHERE prop IS NOT NULL` before sorting, but **adding that filter would change query semantics**, since it would drop rows rather than just reorder them. Since this is a SQL-to-Cypher translator, it should faithfully translate the SQL semantics. If a SQL user wants null filtering, they write `WHERE col IS NOT NULL` in the SQL, and the translator already handles that correctly.
 
 ### 2. Cypher 25 Subquery Grouping Change
 
-Cypher 25 (introduced with Neo4j 2025.06) changed how imported variables are handled inside `COLLECT`, `COUNT`, and `EXISTS` subquery expressions — they are now treated as constants rather than implicit grouping keys. This change does **not** affect the generated Cypher, which uses `WITH`/`RETURN` aggregation rather than subquery expressions. However, if the translator is extended to emit `COLLECT{}` or `COUNT{}` subqueries in the future, this behavioral change will need to be accounted for.
+Cypher 25 (introduced with Neo4j 2025.06) changed how imported variables are handled inside `COLLECT`, `COUNT`, and `EXISTS` subquery expressions; they are now treated as constants rather than implicit grouping keys. This change does **not** affect the generated Cypher, which uses `WITH`/`RETURN` aggregation rather than subquery expressions. However, if the translator is extended to emit `COLLECT{}` or `COUNT{}` subqueries in the future, this behavioral change will need to be accounted for.
 
 ---
 
@@ -677,6 +677,6 @@ RETURN pr.names, sum(r.claimCount) AS totalClaims
 
 The `r.claimCount` references a property on the relationship itself, not on either node.
 
-In SQL, there is no syntax for this. A `NATURAL JOIN` between `ResolvedPharmacy` and `ResolvedPrescriber` translates to a Cypher `MATCH (p)-->(pr)` pattern, but the SQL translator only exposes node properties (columns on the "tables"). The relationship connecting the two tables is implicit — you can traverse it, but you cannot reference `r.claimCount` because `r` does not exist in the SQL model. SQL has no concept of a join edge carrying its own data.
+In SQL, there is no syntax for this. A `NATURAL JOIN` between `ResolvedPharmacy` and `ResolvedPrescriber` translates to a Cypher `MATCH (p)-->(pr)` pattern, but the SQL translator only exposes node properties (columns on the "tables"). The relationship connecting the two tables is implicit; you can traverse it, but you cannot reference `r.claimCount` because `r` does not exist in the SQL model. SQL has no concept of a join edge carrying its own data.
 
 This is a fundamental mismatch between the relational model (joins are structural, stateless) and the property graph model (relationships are first-class entities with their own properties). The GROUP BY/HAVING implementation does not change this boundary. Queries that aggregate over relationship properties remain Cypher-only.

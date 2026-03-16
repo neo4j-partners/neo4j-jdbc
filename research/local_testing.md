@@ -20,7 +20,7 @@
 From the repository root:
 
 ```bash
-# Fast build — skips tests, checkstyle, and other validation
+# Fast build: skips tests, checkstyle, and other validation
 ./mvnw -Dfast package
 ```
 
@@ -34,7 +34,7 @@ This installs `6.11.1-SNAPSHOT` artifacts into your local Maven repository (`~/.
 | Core JDBC driver (no translator) | `bundles/neo4j-jdbc-bundle/target/neo4j-jdbc-bundle-6.11.1-SNAPSHOT.jar` |
 | Full bundle (driver + translator) | `bundles/neo4j-jdbc-full-bundle/target/neo4j-jdbc-full-bundle-6.11.1-SNAPSHOT.jar` |
 
-The **full bundle** is the easiest option — it is a shaded JAR containing the core driver and the SQL-to-Cypher translator, so you only need one JAR on the classpath.
+The **full bundle** is the easiest option; it is a shaded JAR containing the core driver and the SQL-to-Cypher translator, so you only need one JAR on the classpath.
 
 ## Use from a Maven Project
 
@@ -48,7 +48,7 @@ Add the snapshot dependency to your `pom.xml`:
 </dependency>
 ```
 
-No special repository configuration is needed — `./mvnw -Dfast package` installs to your local `~/.m2`, which Maven checks by default.
+No special repository configuration is needed. `./mvnw -Dfast package` installs to your local `~/.m2`, which Maven checks by default.
 
 ## Use from a Gradle Project
 
@@ -191,7 +191,7 @@ Each run creates a directory like `research_logs/post_phase2/` containing the lo
 ### Prerequisites
 
 - JDK 17+
-- Docker running (required for Step 3 — integration tests via Testcontainers)
+- Docker running (required for Step 3, integration tests via Testcontainers)
 
 ### What the Script Handles
 
@@ -262,7 +262,7 @@ public class GroupByTest {
     public static void main(String[] args) throws Exception {
         String url = "jdbc:neo4j://localhost:7687?enableSQLTranslation=true";
         try (Connection conn = DriverManager.getConnection(url, "neo4j", "password")) {
-            // Simple GROUP BY — implicit grouping
+            // Simple GROUP BY: implicit grouping
             try (Statement stmt = conn.createStatement()) {
                 ResultSet rs = stmt.executeQuery(
                     "SELECT name, count(*) AS cnt FROM Person GROUP BY name");
@@ -271,7 +271,7 @@ public class GroupByTest {
                 }
             }
 
-            // HAVING — post-aggregation filter
+            // HAVING: post-aggregation filter
             try (Statement stmt = conn.createStatement()) {
                 ResultSet rs = stmt.executeQuery(
                     "SELECT name, count(*) AS cnt FROM Person GROUP BY name HAVING cnt > 1");

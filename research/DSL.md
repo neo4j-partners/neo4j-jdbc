@@ -77,10 +77,10 @@ OngoingReading                           (after MATCH + optional WHERE)
 ## Key Type Relationships
 
 - `OngoingReading` is the shared interface that exposes `.returning()`, `.returningDistinct()`, and `.with()`
-- `OngoingReadingWithWhere` extends `OngoingReading` — result of adding `.where()`
+- `OngoingReadingWithWhere` extends `OngoingReading`: result of adding `.where()`
 - `OngoingReadingWithoutWhere` extends `OngoingReading` and can be cast to `OngoingReadingWithWhere`
-- `OrderableOngoingReadingAndWithWithoutWhere` — result of `.with()`, also satisfies `OngoingReading`
-- `OngoingMatchAndReturnWithOrder` — result of `.returning()`, exposes `.orderBy()` and `.limit()`
+- `OrderableOngoingReadingAndWithWithoutWhere`: result of `.with()`, also satisfies `OngoingReading`
+- `OngoingMatchAndReturnWithOrder`: result of `.returning()`, exposes `.orderBy()` and `.limit()`
 
 ## Expression Aliasing for WITH
 
@@ -98,7 +98,7 @@ Cypher.name("alias_name")    // Returns SymbolicName, usable as Expression
 
 ## Condition Translation
 
-The `condition(org.jooq.Condition c)` method (line 1857) translates jOOQ conditions to Cypher-DSL conditions. It handles: And, Or, Xor, Not, Eq, Gt, Ge, Lt, Le, Ne, Between, IsNull, IsNotNull, Like, InList, and Row variants. This same method can be reused for HAVING condition translation — the HAVING condition from jOOQ is just an `org.jooq.Condition`.
+The `condition(org.jooq.Condition c)` method (line 1857) translates jOOQ conditions to Cypher-DSL conditions. It handles: And, Or, Xor, Not, Eq, Gt, Ge, Lt, Le, Ne, Between, IsNull, IsNotNull, Like, InList, and Row variants. This same method can be reused for HAVING condition translation; the HAVING condition from jOOQ is just an `org.jooq.Condition`.
 
 ## Aggregate Function Mapping
 

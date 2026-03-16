@@ -1,4 +1,4 @@
-# GROUP BY / HAVING — Remaining Test Work
+# GROUP BY / HAVING: Remaining Test Work
 
 ## Current State
 
@@ -25,7 +25,7 @@
 
 **Goal:** Comprehensive coverage matching the full specification.
 **Estimated new tests:** ~50-70 additional
-**Priority:** Lower — pursue after Phases 7-8 are merged and stable
+**Priority:** Lower; pursue after Phases 7-8 are merged and stable
 
 ### Priority 1: Core Correctness (~15 tests)
 
@@ -55,11 +55,11 @@ Verify non-GROUP BY queries still work after all changes:
 
 ### Priority 4: Edge Cases (~10 tests)
 
-- GROUP BY on expressions (e.g., `GROUP BY YEAR(released)` — requires expression-level translation that the current implementation does not handle; jOOQ parses these into complex QOM nodes)
+- GROUP BY on expressions (e.g., `GROUP BY YEAR(released)`; requires expression-level translation that the current implementation does not handle; jOOQ parses these into complex QOM nodes)
 - Very long GROUP BY column lists
 - GROUP BY with CASE expressions
 - Aliased table references in GROUP BY
-- GROUP BY by ordinal (`GROUP BY 1, 2` — jOOQ does not resolve ordinals, producing a field named `"1"`; would require manual resolution from the SELECT list)
+- GROUP BY by ordinal (`GROUP BY 1, 2`; jOOQ does not resolve ordinals, producing a field named `"1"`; would require manual resolution from the SELECT list)
 
 **Exit criteria:** Full integration suite passes, no regression. Target: ~125+ total integration tests.
 
@@ -87,11 +87,11 @@ Verify non-GROUP BY queries still work after all changes:
 
 These were considered and explicitly deferred:
 
-1. **GROUP BY validation** — Rejecting queries where non-aggregated SELECT columns are missing from GROUP BY. Decision: silently translate, matching MySQL's permissive mode. Cypher handles this correctly. Documented in `requiresWithForGroupBy()` Javadoc.
+1. **GROUP BY validation:** Rejecting queries where non-aggregated SELECT columns are missing from GROUP BY. Decision: silently translate, matching MySQL's permissive mode. Cypher handles this correctly. Documented in `requiresWithForGroupBy()` Javadoc.
 
-2. **Configuration flags** — No backward-compatibility flags for the new WITH clause generation. The previous output was wrong; the new output is correct. No opt-out needed.
+2. **Configuration flags:** No backward-compatibility flags for the new WITH clause generation. The previous output was wrong; the new output is correct. No opt-out needed.
 
-3. **HAVING without GROUP BY validation** — SQL technically allows `HAVING` without `GROUP BY`. The translator handles this correctly by treating the entire table as one group. No validation needed.
+3. **HAVING without GROUP BY validation:** SQL technically allows `HAVING` without `GROUP BY`. The translator handles this correctly by treating the entire table as one group. No validation needed.
 
 ---
 

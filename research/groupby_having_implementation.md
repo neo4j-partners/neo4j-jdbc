@@ -2,7 +2,7 @@
 
 ## Summary
 
-The Neo4j JDBC SQL-to-Cypher translator has been extended with full GROUP BY and HAVING support across six implementation phases, plus a comprehensive integration test suite. The core challenge: Cypher has no `GROUP BY` clause — grouping is implicit based on non-aggregated expressions in `RETURN`. When GROUP BY columns differ from SELECT or HAVING is present, a Cypher `WITH` clause bridges the semantic gap.
+The Neo4j JDBC SQL-to-Cypher translator has been extended with full GROUP BY and HAVING support across six implementation phases, plus a comprehensive integration test suite. The core challenge: Cypher has no `GROUP BY` clause, so grouping is implicit based on non-aggregated expressions in `RETURN`. When GROUP BY columns differ from SELECT or HAVING is present, a Cypher `WITH` clause bridges the semantic gap.
 
 **Current state:** 425+ unit tests (0 failures), 56 integration tests (all passing), all production code complete through Phase 6.
 
@@ -14,13 +14,13 @@ The Neo4j JDBC SQL-to-Cypher translator has been extended with full GROUP BY and
 
 Two paths depending on query structure:
 
-**Simple path** — GROUP BY columns match SELECT non-aggregates:
+**Simple path:** GROUP BY columns match SELECT non-aggregates:
 ```
 SQL:    SELECT name, count(*) FROM People GROUP BY name
 Cypher: MATCH (p:People) RETURN p.name AS name, count(*) AS `count(*)`
 ```
 
-**WITH path** — GROUP BY columns differ from SELECT, or HAVING is present:
+**WITH path:** GROUP BY columns differ from SELECT, or HAVING is present:
 ```
 SQL:    SELECT name FROM People GROUP BY name HAVING count(*) > 5
 Cypher: MATCH (p:People) WITH p.name AS name, count(*) AS __having_col_0
@@ -120,27 +120,27 @@ Full HAVING condition support:
 | SQL-to-Cypher Translation | ~330 | `SqlToCypherTests.java` |
 | **Unit Total** | **~425** | |
 
-### Integration Tests (GroupByIT.java — 56 tests)
+### Integration Tests (GroupByIT.java, 56 tests)
 
-All tests execute against a real Neo4j instance via Testcontainers with both controlled (`People` — 5 nodes, 3 departments) and realistic (Movies graph — ~38 movies, ~133 persons) datasets.
+All tests execute against a real Neo4j instance via Testcontainers with both controlled (`People`, 5 nodes, 3 departments) and realistic (Movies graph, ~38 movies, ~133 persons) datasets.
 
-- **BasicGroupBy** (7 tests) — count, sum, avg, min/max, multiple aggregates per group
-- **GroupByNotInSelect** (5 tests) — GROUP BY columns hidden from result set
-- **MultipleGroupByColumns** (7 tests) — composite GROUP BY keys
-- **OrderByWithGroupBy** (8 tests) — ORDER BY on aggregates and GROUP BY columns
-- **LimitOffsetWithGroupBy** (5 tests) — LIMIT and OFFSET with GROUP BY
-- **DistinctWithGroupBy** (3 tests) — DISTINCT combined with GROUP BY
-- **GroupByWithWhere** (6 tests) — WHERE clause filtering before aggregation
-- **GlobalAggregationRegression** (5 tests) — non-GROUP BY aggregates (regression safety)
-- **EdgeCases** (5 tests) — empty results, large cardinality, single-row groups
-- **MultiAggregate** (3 tests) — multiple aggregate functions in one query
-- **RegressionTests** (5 tests) — non-GROUP BY SQL patterns still work correctly
+- **BasicGroupBy** (7 tests): count, sum, avg, min/max, multiple aggregates per group
+- **GroupByNotInSelect** (5 tests): GROUP BY columns hidden from result set
+- **MultipleGroupByColumns** (7 tests): composite GROUP BY keys
+- **OrderByWithGroupBy** (8 tests): ORDER BY on aggregates and GROUP BY columns
+- **LimitOffsetWithGroupBy** (5 tests): LIMIT and OFFSET with GROUP BY
+- **DistinctWithGroupBy** (3 tests): DISTINCT combined with GROUP BY
+- **GroupByWithWhere** (6 tests): WHERE clause filtering before aggregation
+- **GlobalAggregationRegression** (5 tests): non-GROUP BY aggregates (regression safety)
+- **EdgeCases** (5 tests): empty results, large cardinality, single-row groups
+- **MultiAggregate** (3 tests): multiple aggregate functions in one query
+- **RegressionTests** (5 tests): non-GROUP BY SQL patterns still work correctly
 
 ### Key Bugs Found and Fixed During Testing
 
-1. **ORDER BY alias resolution** — ORDER BY referencing a SELECT alias failed when a WITH clause was present
-2. **OFFSET translation** — OFFSET was not being translated in certain code paths
-3. **Column labels** — Result set column labels were incorrect for aliased aggregate expressions
+1. **ORDER BY alias resolution**: ORDER BY referencing a SELECT alias failed when a WITH clause was present
+2. **OFFSET translation**: OFFSET was not being translated in certain code paths
+3. **Column labels**: Result set column labels were incorrect for aliased aggregate expressions
 
 ---
 
@@ -148,7 +148,7 @@ All tests execute against a real Neo4j instance via Testcontainers with both con
 
 ### GDS Through SQL (Not Feasible)
 
-Parameterized GDS procedure calls (e.g., personalized PageRank) cannot be executed through pure SQL. Cypher-backed views don't support parameterization — WHERE clauses filter results after the procedure runs. Three approaches were analyzed (structured hints, parameterized CBVs, SQL CALL); all require driver changes with uncertain upstream adoption. Current recommendation: use `FORCE_CYPHER` hint for direct JDBC, Neo4j Spark Connector for Databricks.
+Parameterized GDS procedure calls (e.g., personalized PageRank) cannot be executed through pure SQL. Cypher-backed views don't support parameterization; WHERE clauses filter results after the procedure runs. Three approaches were analyzed (structured hints, parameterized CBVs, SQL CALL); all require driver changes with uncertain upstream adoption. Current recommendation: use `FORCE_CYPHER` hint for direct JDBC, Neo4j Spark Connector for Databricks.
 
 ### JDBC Driver Capabilities (Documented)
 
