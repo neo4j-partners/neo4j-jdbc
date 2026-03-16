@@ -168,6 +168,89 @@ Uses the same People + Movies data sets.
 | `HavingWithJoin` | 3 | NATURAL JOIN with HAVING count, not-in-SELECT metadata, compound HAVING with min(born) |
 | `HavingKitchenSink` | 3 | Full DISTINCT + WHERE + GROUP BY + HAVING + ORDER BY + LIMIT + OFFSET; multiple aggregates; Movies JOIN |
 
+---
+
+## Automated Test Harness (`test.sh`)
+
+Use `research_logs/test.sh` for scripted test runs. Output is organized into named directories under `research_logs/`.
+
+```bash
+# Full baseline capture (all steps)
+research_logs/test.sh --step all --output init_baseline
+
+# After completing a phase, run against a new output dir and compare
+research_logs/test.sh --step 1 --output post_phase2
+
+# Run a single step
+research_logs/test.sh --step 1 --output my_test
+research_logs/test.sh --step 3 --output integration_check
+```
+
+Each run creates a directory like `research_logs/post_phase2/` containing the log files for that run. Previous runs are never overwritten.
+
+### Prerequisites
+
+- JDK 17+
+- Docker running (required for Step 3 — integration tests via Testcontainers)
+
+### What the Script Handles
+
+The script automatically skips three Maven plugins that would otherwise fail the build before tests run:
+
+1. **Checkstyle**: 72 pre-existing `InnerTypeLast` ordering violations.
+2. **Spring JavaFormat**: Same in-progress code triggers formatting violations.
+3. **License headers**: `research_logs/` contains files without Apache 2.0 headers.
+
+It also uses `-fae` (fail-at-end) for Steps 2 and 3 so Maven continues through all modules.
+
+### Steps
+
+| Step | What | Time | Requires |
+|------|------|------|----------|
+| 1 | Translator module unit tests | ~12s | JDK 17+ |
+| 2 | All modules unit tests | ~2-5min | JDK 17+ |
+| 3 | Integration tests (Testcontainers) | ~5-15min | JDK 17+ and Docker |
+| 4 | Cypher output capture (SqlToCypherTests) | ~12s | JDK 17+ |
+| 5 | Checkstyle state recording | ~5s | JDK 17+ |
+| all | Steps 1-5 sequentially | ~8-20min | JDK 17+ and Docker |
+
+### Output Structure
+
+```
+research_logs/
+├── test.sh                              ← The test runner script
+├── init_baseline/                       ← Initial baseline
+│   ├── translator-unit.log
+│   ├── translator-summary.txt
+│   ├── all-unit.log
+│   ├── all-unit-summary.txt
+│   ├── integration.log
+│   ├── integration-summary.txt
+│   ├── cypher-output.log
+│   └── checkstyle.log
+├── post_phase2/                         ← After Phase 2
+│   ├── translator-unit.log
+│   └── translator-summary.txt
+└── ...
+```
+
+### Regression Checking
+
+After each phase, compare failures against the baseline:
+
+```bash
+research_logs/test.sh --step 1 --output post_phase4
+
+diff research_logs/init_baseline/translator-summary.txt \
+     research_logs/post_phase4/translator-summary.txt
+```
+
+- **New failures** not in the baseline = regression. Stop and investigate.
+- **Fewer failures** = expected progress.
+- **Identical** = no change to this step's scope.
+
+---
+
 ## Quick Smoke Test with Java
 
 A minimal program to verify the translator works end-to-end:
